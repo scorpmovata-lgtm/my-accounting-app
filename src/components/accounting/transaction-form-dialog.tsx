@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 
 export function TransactionFormDialog() {
   const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const contacts = useAccountingStore((s) => s.contacts);
   const categories = useAccountingStore((s) => s.categories);
   const addTransaction = useAccountingStore((s) => s.addTransaction);
@@ -63,7 +64,7 @@ export function TransactionFormDialog() {
     setDescription("");
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!contactId) {
       toast({
         title: "خطا",
@@ -83,31 +84,42 @@ export function TransactionFormDialog() {
       return;
     }
 
-    const result = addTransaction({
-      contactId,
-      categoryId: categoryId === "none" ? null : categoryId,
-      transactionType: type,
-      amount,
-      currency,
-      effectiveAt: date,
-      description: description.trim() || undefined,
-    });
-
-    if (result.ok) {
-      toast({
-        title: "تراکنش ثبت شد",
-        description: `${formatAmount(amount, currency)} برای ${
-          selectedContact?.displayName ?? ""
-        }`,
+    setSubmitting(true);
+    try {
+      const result = await addTransaction({
+        contactId,
+        categoryId: categoryId === "none" ? null : categoryId,
+        transactionType: type,
+        amount,
+        currency,
+        effectiveAt: date,
+        description: description.trim() || undefined,
       });
-      reset();
-      setOpen(false);
-    } else {
+
+      if (result.ok) {
+        toast({
+          title: "تراکنش ثبت شد",
+          description: `${formatAmount(amount, currency)} برای ${
+            selectedContact?.displayName ?? ""
+          }`,
+        });
+        reset();
+        setOpen(false);
+      } else {
+        toast({
+          title: "خطا در ثبت تراکنش",
+          description: result.error,
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
       toast({
-        title: "خطا در ثبت تراکنش",
-        description: result.error,
+        title: "خطای غیرمنتظره",
+        description: e instanceof Error ? e.message : "خطای ناشناخته",
         variant: "destructive",
       });
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -262,7 +274,16 @@ export function TransactionFormDialog() {
           <Button variant="outline" onClick={() => setOpen(false)}>
             انصراف
           </Button>
-          <Button onClick={handleSubmit}>ثبت تراکنش</Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+                در حال ثبت...
+              </>
+            ) : (
+              "ثبت تراکنش"
+            )}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

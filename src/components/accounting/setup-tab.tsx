@@ -9,6 +9,9 @@ import {
   Send,
   Rocket,
   Terminal,
+  Smartphone,
+  Layers,
+  Download,
 } from "lucide-react";
 import {
   Card,
@@ -103,6 +106,31 @@ function toFa(n: number): string {
 export function SetupTab() {
   return (
     <div className="space-y-4">
+      {/* کارت دانلود کد منبع */}
+      <Card className="border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-start gap-3 flex-1">
+              <Download className="h-5 w-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-sm space-y-1">
+                <div className="font-medium text-emerald-800 dark:text-emerald-300">
+                  دانلود کد منبع کامل اپ (۲۶۶ کیلوبایت)
+                </div>
+                <p className="text-emerald-700/80 dark:text-emerald-400/80 text-xs">
+                  این فایل .zip را دانلود کن، در پوشه پروژه‌ات extract کن، سپس به GitHub پوش کن. شامل: source code, آیکون‌ها, manifest, service worker, README, .env.example, .gitignore.
+                </p>
+              </div>
+            </div>
+            <Button asChild className="shrink-0">
+              <a href="/my-accounting-app.zip" download>
+                <Download className="h-4 w-4 ml-1" />
+                دانلود .zip
+              </a>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* معرفی فاز */}
       <Card className="border-primary/30 bg-primary/5">
         <CardContent className="p-4 sm:p-5">

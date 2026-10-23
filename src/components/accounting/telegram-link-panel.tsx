@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Send, Link2, Clock, ShieldCheck } from "lucide-react";
+import { Send, Link2, Clock, ShieldCheck, Loader2 } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -25,6 +25,7 @@ import {
   TELEGRAM_SCOPE_LABELS,
 } from "@/lib/accounting/types";
 import { formatJalaliShort, toPersianDigits } from "@/lib/accounting/jalali";
+import { useToast } from "@/hooks/use-toast";
 
 export function TelegramLinkPanel() {
   const contacts = useAccountingStore((s) => s.contacts);
@@ -34,8 +35,52 @@ export function TelegramLinkPanel() {
   const revokeTelegramLink = useAccountingStore(
     (s) => s.revokeTelegramLink
   );
+  const { toast } = useToast();
 
   const [scope, setScope] = useState<TelegramAccessScope>("balance_only");
+  const [busyContactId, setBusyContactId] = useState<string | null>(null);
+
+  async function handleGenerate(contactId: string, displayName: string) {
+    setBusyContactId(contactId);
+    try {
+      const result = await generateLinkCode(contactId, scope);
+      if (result) {
+        toast({
+          title: "کد اتصال تولید شد",
+          description: `کد ${toPersianDigits(
+            result.code
+          )} برای «${displayName}» (۱۰ دقیقه اعتبار)`,
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "خطا در تولید کد",
+        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyContactId(null);
+    }
+  }
+
+  async function handleRevoke(linkId: string, displayName: string) {
+    setBusyContactId(linkId);
+    try {
+      await revokeTelegramLink(linkId);
+      toast({
+        title: "اتصال لغو شد",
+        description: `اتصال تلگرام «${displayName}» لغو شد.`,
+      });
+    } catch (e) {
+      toast({
+        title: "خطا در لغو اتصال",
+        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyContactId(null);
+    }
+  }
 
   return (
     <Card>
@@ -153,17 +198,27 @@ export function TelegramLinkPanel() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => revokeTelegramLink(link.id)}
+                      disabled={busyContactId === link.id}
+                      onClick={() => handleRevoke(link.id, c.displayName)}
                     >
-                      لغو اتصال
+                      {busyContactId === link.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        "لغو اتصال"
+                      )}
                     </Button>
                   ) : (
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => generateLinkCode(c.id, scope)}
+                      disabled={busyContactId === c.id}
+                      onClick={() => handleGenerate(c.id, c.displayName)}
                     >
-                      تولید کد
+                      {busyContactId === c.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        "تولید کد"
+                      )}
                     </Button>
                   )}
                 </li>

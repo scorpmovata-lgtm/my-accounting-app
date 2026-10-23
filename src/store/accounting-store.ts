@@ -1,5 +1,7 @@
-// Zustand store — مدیریت state کلاینت برای پروتوتایپ
-// در نسخه واقعی، این store به‌جای نگه‌داری داده، فقط cache داده از Supabase است.
+// Zustand store — مدیریت state کلاینت
+// دو حالت دارد:
+//   - mock mode (پیش‌فرض): داده از mock-data.ts می‌آید، عملیات لوکال هستند
+//   - real mode: داده از Supabase می‌آید، عملیات از طریق Edge Function/API انجام می‌شوند
 
 import { create } from "zustand";
 import {
@@ -9,8 +11,8 @@ import {
   Currency,
   Ledger,
   LinkCode,
-  TelegramLink,
   TelegramAccessScope,
+  TelegramLink,
   Transaction,
   TransactionType,
 } from "@/lib/accounting/types";
@@ -23,6 +25,18 @@ import {
   seedTelegramLinks,
   seedTransactions,
 } from "@/lib/accounting/mock-data";
+import {
+  addCategoryToSupabase,
+  addContactToSupabase,
+  addTransactionViaEdgeFunction,
+  fetchAuditLogs,
+  fetchCategories,
+  fetchContacts,
+  fetchTelegramLinks,
+  fetchTransactions,
+  generateLinkCodeInSupabase,
+  revokeTelegramLinkInSupabase,
+} from "@/lib/supabase/api";
 
 export interface AddTransactionInput {
   contactId: string;
@@ -43,18 +57,24 @@ interface AccountingState {
   telegramLinks: TelegramLink[];
   linkCodes: LinkCode[];
 
-  // اعمال
+  realMode: boolean;
+  realLedgerId: string | null;
+
+  activateRealMode: (ledgerId: string, ownerName: string) => Promise<void>;
+  deactivateRealMode: () => void;
+  loadRealData: () => Promise<void>;
+
   addTransaction: (
     input: AddTransactionInput
-  ) => { ok: boolean; error?: string; transaction?: Transaction };
-  addCategory: (name: string) => Category;
+  ) => Promise<{ ok: boolean; error?: string; transaction?: Transaction }>;
+  addCategory: (name: string) => Promise<Category>;
   deactivateCategory: (id: string) => void;
-  addContact: (name: string, notes?: string) => Contact;
+  addContact: (name: string, notes?: string) => Promise<Contact>;
   generateLinkCode: (
     contactId: string,
     scope: TelegramAccessScope
-  ) => LinkCode | null;
-  revokeTelegramLink: (id: string) => void;
+  ) => Promise<LinkCode | null>;
+  revokeTelegramLink: (id: string) => Promise<void>;
 }
 
 function uid(prefix: string): string {
@@ -64,7 +84,6 @@ function uid(prefix: string): string {
 }
 
 function makeLinkCode(): string {
-  // کد ۶ رقمی
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
@@ -76,10 +95,103 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   auditLogs: seedAuditLogs,
   telegramLinks: seedTelegramLinks,
   linkCodes: [],
+  realMode: false,
+  realLedgerId: null,
 
-  addTransaction: (input) => {
+  activateRealMode: async (ledgerId, ownerName) => {
+    set({
+      realMode: true,
+      realLedgerId: ledgerId,
+      ledger: { ...seedLedger, ownerName, name: "دفتر شخصی " + ownerName },
+    });
+    await get().loadRealData();
+  },
+
+  deactivateRealMode: () => {
+    set({
+      realMode: false,
+      realLedgerId: null,
+      ledger: seedLedger,
+      contacts: seedContacts,
+      categories: seedCategories,
+      transactions: seedTransactions,
+      auditLogs: seedAuditLogs,
+      telegramLinks: seedTelegramLinks,
+      linkCodes: [],
+    });
+  },
+
+  loadRealData: async () => {
+    const ledgerId = get().realLedgerId;
+    if (!ledgerId) return;
+    try {
+      const [contacts, categories, transactions, telegramLinks, auditLogs] =
+        await Promise.all([
+          fetchContacts(ledgerId),
+          fetchCategories(ledgerId),
+          fetchTransactions(ledgerId),
+          fetchTelegramLinks(ledgerId),
+          fetchAuditLogs(ledgerId),
+        ]);
+      set({
+        contacts,
+        categories,
+        transactions,
+        telegramLinks,
+        auditLogs,
+        linkCodes: [],
+      });
+    } catch (e) {
+      console.error("loadRealData error:", e);
+      throw e;
+    }
+  },
+
+  addTransaction: async (input) => {
     const state = get();
-    // اعتبارسنجی طبق سند طراحی
+
+    if (state.realMode) {
+      try {
+        const txn = await addTransactionViaEdgeFunction(input);
+        const contact = state.contacts.find((c) => c.id === input.contactId);
+        const log: AuditLogEntry = {
+          id: uid("audit"),
+          actorId: "real",
+          action: "CREATE_TXN",
+          entityType: "Transaction",
+          entityId: txn.id,
+          result: "success",
+          details: `ثبت تراکنش ${input.amount.toLocaleString(
+            "en-US"
+          )} ${input.currency === "IRT" ? "تومان" : "ریال"} برای ${
+            contact?.displayName ?? "—"
+          }`,
+          createdAt: txn.createdAt,
+        };
+        set({
+          transactions: [txn, ...state.transactions],
+          auditLogs: [log, ...state.auditLogs],
+        });
+        return { ok: true, transaction: txn };
+      } catch (e) {
+        const errorMessage =
+          e instanceof Error ? e.message : "خطای ناشناخته در Edge Function";
+        const log: AuditLogEntry = {
+          id: uid("audit"),
+          actorId: "real",
+          action: "CREATE_TXN",
+          entityType: "Transaction",
+          entityId: "—",
+          result: "failure",
+          details: `تلاش ناموفق: ${errorMessage}`,
+          createdAt: new Date().toISOString(),
+        };
+        set({ auditLogs: [log, ...state.auditLogs] });
+        return { ok: false, error: errorMessage };
+      }
+    }
+
+    // حالت موک
     const validation = validateTransaction(
       {
         contactId: input.contactId,
@@ -89,7 +201,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       state.transactions
     );
     if (!validation.ok) {
-      // ثبت audit log برای عملیات ناموفق
       const failLog: AuditLogEntry = {
         id: uid("audit"),
         actorId: "owner",
@@ -144,8 +255,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     return { ok: true, transaction: txn };
   },
 
-  addCategory: (name) => {
+  addCategory: async (name) => {
     const state = get();
+
+    if (state.realMode && state.realLedgerId) {
+      const cat = await addCategoryToSupabase(state.realLedgerId, name);
+      set({ categories: [...state.categories, cat] });
+      return cat;
+    }
+
     const cat: Category = {
       id: uid("cat"),
       ledgerId: state.ledger.id,
@@ -182,7 +300,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     };
     const log: AuditLogEntry = {
       id: uid("audit"),
-      actorId: "owner",
+      actorId: state.realMode ? "real" : "owner",
       action: "DEACTIVATE_CATEGORY",
       entityType: "Category",
       entityId: id,
@@ -196,8 +314,19 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     });
   },
 
-  addContact: (name, notes) => {
+  addContact: async (name, notes) => {
     const state = get();
+
+    if (state.realMode && state.realLedgerId) {
+      const contact = await addContactToSupabase(
+        state.realLedgerId,
+        name,
+        notes
+      );
+      set({ contacts: [...state.contacts, contact] });
+      return contact;
+    }
+
     const contact: Contact = {
       id: uid("contact"),
       ledgerId: state.ledger.id,
@@ -223,16 +352,47 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     return contact;
   },
 
-  generateLinkCode: (contactId, scope) => {
+  generateLinkCode: async (contactId, scope) => {
     const state = get();
     const contact = state.contacts.find((c) => c.id === contactId);
     if (!contact) return null;
+
+    if (state.realMode && state.realLedgerId) {
+      const result = await generateLinkCodeInSupabase(
+        contactId,
+        state.realLedgerId,
+        scope
+      );
+      const linkCode: LinkCode = {
+        code: result.code,
+        contactId,
+        scope,
+        expiresAt: result.expiresAt,
+        used: false,
+        createdAt: new Date().toISOString(),
+      };
+      const log: AuditLogEntry = {
+        id: uid("audit"),
+        actorId: "real",
+        action: "GENERATE_LINK_CODE",
+        entityType: "Contact",
+        entityId: contactId,
+        result: "success",
+        details: `تولید کد اتصال تلگرام برای «${contact.displayName}» (${result.code})`,
+        createdAt: linkCode.createdAt,
+      };
+      set({
+        linkCodes: [linkCode, ...state.linkCodes],
+        auditLogs: [log, ...state.auditLogs],
+      });
+      return linkCode;
+    }
+
     const now = Date.now();
     const linkCode: LinkCode = {
       code: makeLinkCode(),
       contactId,
       scope,
-      // انقضا ۱۰ دقیقه
       expiresAt: new Date(now + 10 * 60 * 1000).toISOString(),
       used: false,
       createdAt: new Date(now).toISOString(),
@@ -244,15 +404,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       entityType: "Contact",
       entityId: contactId,
       result: "success",
-      details: `تولید کد اتصال تلگرام برای «${contact.displayName}» (دسترسی: ${
-        scope === "balance_only"
-          ? "فقط مانده"
-          : scope === "transaction_list"
-          ? "فهرست تراکنش‌ها"
-          : scope === "transaction_details"
-          ? "جزئیات تراکنش‌ها"
-          : "گزارش سرفصلی"
-      })`,
+      details: `تولید کد اتصال تلگرام برای «${contact.displayName}»`,
       createdAt: linkCode.createdAt,
     };
     set({
@@ -262,10 +414,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     return linkCode;
   },
 
-  revokeTelegramLink: (id) => {
+  revokeTelegramLink: async (id) => {
     const state = get();
     const link = state.telegramLinks.find((l) => l.id === id);
     if (!link) return;
+
+    if (state.realMode) {
+      await revokeTelegramLinkInSupabase(id);
+    }
+
     const updated: TelegramLink = {
       ...link,
       status: "revoked",
@@ -274,7 +431,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     const contact = state.contacts.find((c) => c.id === link.contactId);
     const log: AuditLogEntry = {
       id: uid("audit"),
-      actorId: "owner",
+      actorId: state.realMode ? "real" : "owner",
       action: "REVOKE_TELEGRAM_LINK",
       entityType: "TelegramLink",
       entityId: id,
