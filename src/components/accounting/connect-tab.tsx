@@ -58,19 +58,14 @@ export function ConnectTab() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // بعد از mount: localStorage را بخوان
+  // init() در AppShell فراخوانی می‌شود (نه اینجا)
   useEffect(() => {
     setConfig(getSupabaseConfig());
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    if (!mounted) return;
-    const unsubscribe = init();
-    return () => {
-      unsubscribe();
-    };
-  }, [config, mounted]);
-
+  // وقتی کاربر login می‌کند، accounting store را به حالت واقعی ببر
   useEffect(() => {
     if (authStatus === "authenticated" && authUser?.ledgerId && !realMode) {
       activateRealMode(
@@ -92,13 +87,15 @@ export function ConnectTab() {
       return;
     }
     setSupabaseConfig(urlInput.trim(), anonInput.trim());
-    setConfig(getSupabaseConfig());
-    setUrlInput("");
-    setAnonInput("");
     toast({
       title: "ذخیره شد",
-      description: "پیکربندی Supabase ذخیره شد. حالا می‌توانید وارد شوید.",
+      description:
+        "پیکربندی Supabase ذخیره شد. صفحه refresh می‌شود تا اتصال برقرار شود.",
     });
+    // صفحه را reload کن تا AppShell init() با config جدید فراخوانی شود
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   }
 
   function handleClearConfig() {
@@ -109,6 +106,9 @@ export function ConnectTab() {
       title: "پاک شد",
       description: "پیکربندی Supabase پاک شد.",
     });
+    setTimeout(() => {
+      window.location.reload();
+    }, 1000);
   }
 
   async function handleLogin() {

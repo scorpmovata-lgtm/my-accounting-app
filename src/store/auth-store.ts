@@ -4,7 +4,6 @@ import { create } from "zustand";
 import {
   fetchLedgerId,
   fetchUserProfile,
-  getCurrentSession,
   signInWithEmail,
   signOutSupabase,
 } from "@/lib/supabase/api";
@@ -15,6 +14,8 @@ export interface AuthUser {
   email: string | null;
   displayName: string | null;
   ledgerId: string | null;
+  // admin: اگر کاربر صاحب دفتر باشد (ledger.owner_user_id === auth.uid())
+  isAdmin: boolean;
 }
 
 interface AuthState {
@@ -40,11 +41,35 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return () => {};
     }
 
-    get().refresh();
+    // مرحله ۱: ابتدا session را از localStorage (persisted) بار کن
+    // این کار برای رفع مشکل refresh ضروری است
+    const initialize = async () => {
+      try {
+        // getSession() session persisted را از localStorage برمی‌گرداند
+        const { data, error } = await client.auth.getSession();
+        if (error || !data.session) {
+          set({ status: "anonymous", user: null });
+          return;
+        }
+        // session موجود است — اکنون user info را fetch کن
+        await get().refresh();
+      } catch (e) {
+        set({ status: "anonymous", user: null });
+      }
+    };
+    initialize();
 
+    // مرحله ۲: گوش دادن به تغییرات auth برای آینده
+    // INITIAL_SESSION: وقتی session از localStorage بار می‌شود
+    // SIGNED_IN / TOKEN_REFRESHED: وقتی session تغییر می‌کند
+    // SIGNED_OUT: وقتی کاربر خارج می‌شود
     const { data: subscription } = client.auth.onAuthStateChange(
       async (event) => {
-        if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (
+          event === "SIGNED_IN" ||
+          event === "TOKEN_REFRESHED" ||
+          event === "INITIAL_SESSION"
+        ) {
           await get().refresh();
         } else if (event === "SIGNED_OUT") {
           set({ status: "anonymous", user: null });
@@ -77,8 +102,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   refresh: async () => {
     try {
-      const session = await getCurrentSession();
-      if (!session) {
+      const client = getSupabaseClient();
+      if (!client) {
+        set({ status: "anonymous", user: null });
+        return;
+      }
+      // session را از client بگیر (هم از memory، هم از localStorage)
+      const { data: sessionData } = await client.auth.getSession();
+      if (!sessionData.session) {
+        set({ status: "anonymous", user: null });
+        return;
+      }
+      const userId = sessionData.session.user.id;
+      // چک کن که session expired نباشد
+      const expiresAt = sessionData.session.expires_at;
+      if (expiresAt && expiresAt * 1000 < Date.now()) {
+        // session expired — تلاش برای refresh یا sign out
         set({ status: "anonymous", user: null });
         return;
       }
@@ -87,14 +126,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ status: "anonymous", user: null });
         return;
       }
-      const ledgerId = await fetchLedgerId(profile.id);
+      const ledgerId = await fetchLedgerId(userId);
+      // admin یعنی صاحب دفتری است که مال خودش است
+      // اگر ledgerId یافت شد، یعنی کاربر صاحب دفتر است (trigger آن را ساخته)
+      const isAdmin = ledgerId !== null;
       set({
         status: "authenticated",
         user: {
-          id: profile.id,
-          email: session.user.email ?? null,
+          id: userId,
+          email: sessionData.session.user.email ?? null,
           displayName: profile.displayName,
           ledgerId,
+          isAdmin,
         },
       });
     } catch (e) {

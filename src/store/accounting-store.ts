@@ -150,8 +150,63 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   addTransaction: async (input) => {
     const state = get();
 
+    // اگر receipt یا payment بیش از مانده باز باشد، آن را به دو تراکنش تجزیه کن:
+    // ۱) یک تراکنش اصلی به اندازه‌ی مانده باز
+    // ۲) یک تراکنش از نوع متضاد برای مابه‌التفاوت
+    // مثلاً: receipt 5M از طلب باز 3M → receipt 3M + payable_charge 2M
+    let adjustedInput = { ...input };
+    let overpayInput: AddTransactionInput | null = null;
+
+    // فقط در حالت موک این را اینجا کنترل کن (در حالت واقعی Edge Function آن را مدیریت می‌کند)
+    if (!state.realMode) {
+      if (input.transactionType === "RECEIPT_ALLOCATION" || input.transactionType === "PAYMENT_ALLOCATION") {
+        // محاسبه‌ی مانده باز برای این contact
+        let receivable = 0;
+        let payable = 0;
+        for (const t of state.transactions) {
+          if (t.contactId !== input.contactId || t.status !== "POSTED") continue;
+          if (t.currency !== input.currency) continue;
+          if (t.transactionType === "RECEIVABLE_CHARGE" || t.transactionType === "OPENING_RECEIVABLE") {
+            receivable += t.amount;
+          } else if (t.transactionType === "PAYABLE_CHARGE" || t.transactionType === "OPENING_PAYABLE") {
+            payable += t.amount;
+          } else if (t.transactionType === "RECEIPT_ALLOCATION") {
+            receivable -= t.amount;
+          } else if (t.transactionType === "PAYMENT_ALLOCATION") {
+            payable -= t.amount;
+          }
+        }
+
+        if (input.transactionType === "RECEIPT_ALLOCATION" && input.amount > receivable && receivable > 0) {
+          // receipt بیش از طلب باز — مابه‌التفاوت را به عنوان بدهی جدید ثبت کن
+          const diff = input.amount - receivable;
+          adjustedInput = { ...input, amount: receivable, description: (input.description ?? "") + " (بخش تسویه طلب)" };
+          overpayInput = {
+            ...input,
+            transactionType: "PAYABLE_CHARGE",
+            amount: diff,
+            description: (input.description ?? "") + " (مابه‌التفاوت بیش‌پرداخت به‌عنوان بدهی)",
+            idempotencyKey: undefined as any,
+          };
+        } else if (input.transactionType === "PAYMENT_ALLOCATION" && input.amount > payable && payable > 0) {
+          // payment بیش از بدهی باز — مابه‌التفاوت را به عنوان طلب جدید ثبت کن
+          const diff = input.amount - payable;
+          adjustedInput = { ...input, amount: payable, description: (input.description ?? "") + " (بخش تسویه بدهی)" };
+          overpayInput = {
+            ...input,
+            transactionType: "RECEIVABLE_CHARGE",
+            amount: diff,
+            description: (input.description ?? "") + " (مابه‌التفاوت بیش‌پرداخت به‌عنوان طلب)",
+            idempotencyKey: undefined as any,
+          };
+        }
+      }
+    }
+
     if (state.realMode) {
       try {
+        // در حالت واقعی، فقط تراکنش اصلی را به Edge Function بفرست
+        // TODO: در آینده، Edge Function را به‌روز می‌کنیم تا خودش overpayment را مدیریت کند
         const txn = await addTransactionViaEdgeFunction(input);
         const contact = state.contacts.find((c) => c.id === input.contactId);
         const log: AuditLogEntry = {
@@ -191,12 +246,12 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       }
     }
 
-    // حالت موک
+    // حالت موک: با adjustedInput و optionally overpayInput
     const validation = validateTransaction(
       {
-        contactId: input.contactId,
-        transactionType: input.transactionType,
-        amount: input.amount,
+        contactId: adjustedInput.contactId,
+        transactionType: adjustedInput.transactionType,
+        amount: adjustedInput.amount,
       },
       state.transactions
     );
@@ -215,44 +270,76 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       return { ok: false, error: validation.error };
     }
 
-    const txn: Transaction = {
+    const contact = state.contacts.find((c) => c.id === input.contactId);
+    const newTransactions: Transaction[] = [];
+
+    // تراکنش اصلی
+    const mainTxn: Transaction = {
       id: uid("tx"),
       ledgerId: state.ledger.id,
-      contactId: input.contactId,
-      categoryId: input.categoryId ?? null,
-      transactionType: input.transactionType,
-      amount: input.amount,
-      currency: input.currency,
-      effectiveAt: input.effectiveAt,
+      contactId: adjustedInput.contactId,
+      categoryId: adjustedInput.categoryId ?? null,
+      transactionType: adjustedInput.transactionType,
+      amount: adjustedInput.amount,
+      currency: adjustedInput.currency,
+      effectiveAt: adjustedInput.effectiveAt,
       createdAt: new Date().toISOString(),
       createdBy: "owner",
-      description: input.description,
+      description: adjustedInput.description,
       status: "POSTED",
       idempotencyKey: uid("idem"),
     };
+    newTransactions.push(mainTxn);
 
-    const contact = state.contacts.find((c) => c.id === input.contactId);
+    // تراکنش مابه‌التفاوت (اگر هست)
+    if (overpayInput) {
+      const overpayTxn: Transaction = {
+        id: uid("tx"),
+        ledgerId: state.ledger.id,
+        contactId: overpayInput.contactId,
+        categoryId: overpayInput.categoryId ?? null,
+        transactionType: overpayInput.transactionType,
+        amount: overpayInput.amount,
+        currency: overpayInput.currency,
+        effectiveAt: overpayInput.effectiveAt,
+        createdAt: new Date().toISOString(),
+        createdBy: "owner",
+        description: overpayInput.description,
+        status: "POSTED",
+        idempotencyKey: uid("idem"),
+      };
+      newTransactions.push(overpayTxn);
+    }
+
     const successLog: AuditLogEntry = {
       id: uid("audit"),
       actorId: "owner",
       action: "CREATE_TXN",
       entityType: "Transaction",
-      entityId: txn.id,
+      entityId: mainTxn.id,
       result: "success",
-      details: `ثبت تراکنش ${input.amount.toLocaleString(
-        "en-US"
-      )} ${input.currency === "IRT" ? "تومان" : "ریال"} برای ${
-        contact?.displayName ?? "نامشخص"
-      }`,
-      createdAt: txn.createdAt,
+      details: overpayInput
+        ? `ثبت تراکنش تسویه ${adjustedInput.amount.toLocaleString(
+            "en-US"
+          )} + ${overpayInput.transactionType === "PAYABLE_CHARGE" ? "ایجاد بدهی" : "ایجاد طلب"} ${overpayInput.amount.toLocaleString(
+            "en-US"
+          )} ${adjustedInput.currency === "IRT" ? "تومان" : "ریال"} برای ${
+            contact?.displayName ?? "نامشخص"
+          }`
+        : `ثبت تراکنش ${adjustedInput.amount.toLocaleString(
+            "en-US"
+          )} ${adjustedInput.currency === "IRT" ? "تومان" : "ریال"} برای ${
+            contact?.displayName ?? "نامشخص"
+          }`,
+      createdAt: mainTxn.createdAt,
     };
 
     set({
-      transactions: [txn, ...state.transactions],
+      transactions: [...newTransactions, ...state.transactions],
       auditLogs: [successLog, ...state.auditLogs],
     });
 
-    return { ok: true, transaction: txn };
+    return { ok: true, transaction: mainTxn };
   },
 
   addCategory: async (name) => {
