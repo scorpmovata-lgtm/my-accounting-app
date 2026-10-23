@@ -353,3 +353,154 @@ function translateAuthError(msg: string): string {
   }
   return msg;
 }
+
+// =================== Admin functions ===================
+
+// لیست همه کاربران (فقط admin)
+export async function adminListUsers(): Promise<Array<{
+  id: string;
+  email: string;
+  created_at: string;
+  last_sign_in_at: string | null;
+  email_confirmed: boolean;
+  display_name: string | null;
+}>> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error("Not configured");
+  const { data: sessionData } = await client.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error("Not authenticated");
+
+  const baseUrl = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!baseUrl || !anonKey) throw new Error("Supabase not configured");
+
+  const response = await fetch(baseUrl + "/functions/v1/admin-users", {
+    method: "GET",
+    headers: {
+      Authorization: "Bearer " + accessToken,
+      apikey: anonKey,
+    },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to list users");
+  }
+  const result = await response.json();
+  return result.users ?? [];
+}
+
+// ساخت کاربر جدید (فقط admin)
+export async function adminCreateUser(input: {
+  email: string;
+  password: string;
+  display_name?: string;
+}): Promise<{ id: string; email: string; display_name: string }> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error("Not configured");
+  const { data: sessionData } = await client.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error("Not authenticated");
+
+  const baseUrl = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!baseUrl || !anonKey) throw new Error("Supabase not configured");
+
+  const response = await fetch(baseUrl + "/functions/v1/admin-users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + accessToken,
+      apikey: anonKey,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to create user");
+  }
+  const result = await response.json();
+  return result.user;
+}
+
+// حذف کاربر (فقط admin)
+export async function adminDeleteUser(userId: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error("Not configured");
+  const { data: sessionData } = await client.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error("Not authenticated");
+
+  const baseUrl = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!baseUrl || !anonKey) throw new Error("Supabase not configured");
+
+  const response = await fetch(baseUrl + "/functions/v1/admin-users?id=" + userId, {
+    method: "DELETE",
+    headers: {
+      Authorization: "Bearer " + accessToken,
+      apikey: anonKey,
+    },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to delete user");
+  }
+}
+
+// backup (فقط admin)
+export async function adminBackup(): Promise<unknown> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error("Not configured");
+  const { data: sessionData } = await client.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error("Not authenticated");
+
+  const baseUrl = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!baseUrl || !anonKey) throw new Error("Supabase not configured");
+
+  const response = await fetch(baseUrl + "/functions/v1/admin-backup", {
+    method: "GET",
+    headers: {
+      Authorization: "Bearer " + accessToken,
+      apikey: anonKey,
+    },
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to backup");
+  }
+  return response.json();
+}
+
+// restore (فقط admin)
+export async function adminRestore(backup: unknown): Promise<{
+  ok: boolean;
+  stats: Record<string, number>;
+}> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error("Not configured");
+  const { data: sessionData } = await client.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error("Not authenticated");
+
+  const baseUrl = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!baseUrl || !anonKey) throw new Error("Supabase not configured");
+
+  const response = await fetch(baseUrl + "/functions/v1/admin-restore", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + accessToken,
+      apikey: anonKey,
+    },
+    body: JSON.stringify(backup),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || "Failed to restore");
+  }
+  return response.json();
+}

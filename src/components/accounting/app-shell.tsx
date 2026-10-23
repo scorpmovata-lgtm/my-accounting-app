@@ -24,6 +24,7 @@ import { TelegramLinkPanel } from "./telegram-link-panel";
 import { AuditLogPanel } from "./audit-log-panel";
 import { SetupTab } from "./setup-tab";
 import { ConnectTab } from "./connect-tab";
+import { AdminTab } from "./admin-tab";
 import { toPersianDigits } from "@/lib/accounting/jalali";
 
 export function AppShell() {
@@ -147,15 +148,19 @@ export function AppShell() {
               </TabsTrigger>
             )}
             {isAdmin && (
+              <TabsTrigger value="admin" className="text-xs sm:text-sm flex-1 min-w-[80px]">
+                مدیریت
+              </TabsTrigger>
+            )}
+            {isAdmin && (
               <TabsTrigger value="audit" className="text-xs sm:text-sm flex-1 min-w-[80px]">
                 ممیزی
               </TabsTrigger>
             )}
-            {isAdmin && (
-              <TabsTrigger value="setup" className="text-xs sm:text-sm flex-1 min-w-[80px]">
-                راه‌اندازی
-              </TabsTrigger>
-            )}
+            {/* تب راه‌اندازی همیشه نمایش داده می‌شود (شامل دانلود .zip و کد Edge Functions) */}
+            <TabsTrigger value="setup" className="text-xs sm:text-sm flex-1 min-w-[80px]">
+              راه‌اندازی
+            </TabsTrigger>
           </TabsList>
           <TabsContent
             value="connect"
@@ -196,20 +201,26 @@ export function AppShell() {
           )}
           {isAdmin && (
             <TabsContent
+              value="admin"
+              className="mt-0 focus-visible:outline-none"
+            >
+              <AdminTab />
+            </TabsContent>
+          )}
+          {isAdmin && (
+            <TabsContent
               value="audit"
               className="mt-0 focus-visible:outline-none"
             >
               <AuditLogPanel />
             </TabsContent>
           )}
-          {isAdmin && (
-            <TabsContent
-              value="setup"
-              className="mt-0 focus-visible:outline-none"
-            >
-              <SetupTab />
-            </TabsContent>
-          )}
+          <TabsContent
+            value="setup"
+            className="mt-0 focus-visible:outline-none"
+          >
+            <SetupTab />
+          </TabsContent>
         </Tabs>
       </main>
 
