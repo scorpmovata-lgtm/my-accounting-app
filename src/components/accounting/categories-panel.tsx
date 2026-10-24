@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Tags, Plus, Loader2 } from "lucide-react";
+import { Tags, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,33 +9,21 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAccountingStore } from "@/store/accounting-store";
 import { toPersianDigits } from "@/lib/accounting/jalali";
-import { useToast } from "@/hooks/use-toast";
 
 export function CategoriesPanel() {
   const categories = useAccountingStore((s) => s.categories);
   const transactions = useAccountingStore((s) => s.transactions);
   const addCategory = useAccountingStore((s) => s.addCategory);
-  const deactivateCategory = useAccountingStore((s) => s.deactivateCategory);
-  const { toast } = useToast();
+  const deactivateCategory = useAccountingStore(
+    (s) => s.deactivateCategory
+  );
   const [newName, setNewName] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  async function handleAdd() {
+  function handleAdd() {
     const name = newName.trim();
     if (!name) return;
-    setSubmitting(true);
-    try {
-      await addCategory(name);
-      setNewName("");
-    } catch (e) {
-      toast({
-        title: "خطا در افزودن سرفصل",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
-    }
+    addCategory(name);
+    setNewName("");
   }
 
   function countForCategory(catId: string): number {
@@ -63,12 +51,8 @@ export function CategoriesPanel() {
               if (e.key === "Enter") handleAdd();
             }}
           />
-          <Button onClick={handleAdd} disabled={!newName.trim() || submitting}>
-            {submitting ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="h-4 w-4" />
-            )}
+          <Button onClick={handleAdd} disabled={!newName.trim()}>
+            <Plus className="h-4 w-4" />
             افزودن
           </Button>
         </div>

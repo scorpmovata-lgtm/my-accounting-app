@@ -463,114 +463,62 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, transaction: existing, idempotent: true });
   }
 
-  // ۳. اعتبارسنجی مالی: بیش‌پرداخت (overpayment) را مدیریت کن
-  // اگر receipt > طلب باز: مابه‌التفاوت به‌عنوان بدهی جدید ثبت می‌شود
-  // اگر payment > بدهی باز: مابه‌التفاوت به‌عنوان طلب جدید ثبت می‌شود
-  let mainAmount = input.amount;
-  let overpayAmount = 0;
-  let overpayType: string | null = null;
-
-  if (input.transactionType === "RECEIPT_ALLOCATION") {
+  // ۳. اعتبارسنجی مالی: دریافت نباید از طلب باز بیشتر باشد
+  if (
+    input.transactionType === "RECEIPT_ALLOCATION" ||
+    input.transactionType === "PAYMENT_ALLOCATION"
+  ) {
     const balance = await computeOutstanding(supabase, input.contactId, input.currency);
-    if (input.amount > balance.receivable && balance.receivable > 0) {
-      mainAmount = balance.receivable;
-      overpayAmount = input.amount - balance.receivable;
-      overpayType = "PAYABLE_CHARGE";
-    } else if (input.amount > balance.receivable && balance.receivable === 0) {
-      overpayAmount = input.amount;
-      overpayType = "PAYABLE_CHARGE";
-      mainAmount = 0;
-    }
-  } else if (input.transactionType === "PAYMENT_ALLOCATION") {
-    const balance = await computeOutstanding(supabase, input.contactId, input.currency);
-    if (input.amount > balance.payable && balance.payable > 0) {
-      mainAmount = balance.payable;
-      overpayAmount = input.amount - balance.payable;
-      overpayType = "RECEIVABLE_CHARGE";
-    } else if (input.amount > balance.payable && balance.payable === 0) {
-      overpayAmount = input.amount;
-      overpayType = "RECEIVABLE_CHARGE";
-      mainAmount = 0;
-    }
-  }
-
-  // ۴. ثبت تراکنش اصلی (اگر mainAmount > 0)
-  let mainTxn: any = null;
-  if (mainAmount > 0) {
-    const { data: txn, error: insertErr } = await supabase
-      .from("transactions")
-      .insert({
-        ledger_id: ledger.id,
-        contact_id: input.contactId,
-        category_id: input.categoryId ?? null,
-        transaction_type: input.transactionType,
-        amount: mainAmount,
-        currency: input.currency,
-        effective_at: input.effectiveAt,
-        created_by: user.sub,
-        description: input.description ?? null,
-        status: "POSTED",
-        idempotency_key: input.idempotencyKey,
-      })
-      .select()
-      .single();
-    if (insertErr || !txn) {
-      const msg = "Insert main failed: " + (insertErr?.message ?? "unknown");
+    if (input.transactionType === "RECEIPT_ALLOCATION" && input.amount > balance.receivable) {
+      const msg =
+        "Receipt " + input.amount + " exceeds outstanding receivable " + balance.receivable;
       await logAudit(supabase, user.sub, "failure", msg, "-");
-      return json({ error: msg }, 500);
+      return json({ error: msg }, 400);
     }
-    mainTxn = txn;
-    await logAudit(
-      supabase, user.sub, "success",
-      "Created " + input.transactionType + " " + mainAmount + " " + input.currency + " for " + contact.display_name,
-      mainTxn.id
-    );
-  }
-
-  // ۵. ثبت تراکنش بیش‌پرداخت (اگر هست)
-  let overpayTxn: any = null;
-  if (overpayAmount > 0 && overpayType) {
-    const overpayIdemKey = input.idempotencyKey + "-overpay";
-    const overpayDesc = (input.description ?? "") + " (بیش‌پرداخت به‌عنوان " + (overpayType === "PAYABLE_CHARGE" ? "بدهی" : "طلب") + ")";
-    const { data: txn2, error: insertErr2 } = await supabase
-      .from("transactions")
-      .insert({
-        ledger_id: ledger.id,
-        contact_id: input.contactId,
-        category_id: input.categoryId ?? null,
-        transaction_type: overpayType,
-        amount: overpayAmount,
-        currency: input.currency,
-        effective_at: input.effectiveAt,
-        created_by: user.sub,
-        description: overpayDesc,
-        status: "POSTED",
-        idempotency_key: overpayIdemKey,
-      })
-      .select()
-      .single();
-    if (insertErr2 || !txn2) {
-      const msg = "Insert overpay failed: " + (insertErr2?.message ?? "unknown");
+    if (input.transactionType === "PAYMENT_ALLOCATION" && input.amount > balance.payable) {
+      const msg =
+        "Payment " + input.amount + " exceeds outstanding payable " + balance.payable;
       await logAudit(supabase, user.sub, "failure", msg, "-");
-      return json({ error: msg }, 500);
+      return json({ error: msg }, 400);
     }
-    overpayTxn = txn2;
-    await logAudit(
-      supabase, user.sub, "success",
-      "Created overpay " + overpayType + " " + overpayAmount + " " + input.currency + " for " + contact.display_name,
-      overpayTxn.id
-    );
   }
 
-  // ۶. پاسخ
-  return json({
-    ok: true,
-    transaction: mainTxn,
-    overpayTransaction: overpayTxn,
-    mainAmount,
-    overpayAmount,
-    overpayType,
-  });
+  // ۴. ثبت تراکنش
+  const { data: txn, error: insertErr } = await supabase
+    .from("transactions")
+    .insert({
+      ledger_id: ledger.id,
+      contact_id: input.contactId,
+      category_id: input.categoryId ?? null,
+      transaction_type: input.transactionType,
+      amount: input.amount,
+      currency: input.currency,
+      effective_at: input.effectiveAt,
+      created_by: user.sub,
+      description: input.description ?? null,
+      status: "POSTED",
+      idempotency_key: input.idempotencyKey,
+    })
+    .select()
+    .single();
+
+  if (insertErr || !txn) {
+    const msg = "Insert failed: " + (insertErr?.message ?? "unknown");
+    await logAudit(supabase, user.sub, "failure", msg, "-");
+    return json({ error: msg }, 500);
+  }
+
+  // ۵. ممیزی
+  await logAudit(
+    supabase,
+    user.sub,
+    "success",
+    "Created " + input.transactionType + " " + input.amount + " " + input.currency +
+      " for " + contact.display_name,
+    txn.id
+  );
+
+  return json({ ok: true, transaction: txn });
 });
 `;
 
@@ -809,453 +757,5 @@ Deno.serve(async (req: Request) => {
     await tg(chatId, "⚠️ خطای سرور. بعداً تلاش کنید.");
     return json({ ok: true });
   }
-});
-`;
-
-// ============================================================
-// Edge Function: admin-users
-// مدیریت کاربران (ساخت، لیست، حذف) — فقط admin
-// مسیر: supabase/functions/admin-users/index.ts
-// دیپلوی: supabase functions deploy admin-users --no-verify-jwt
-// ============================================================
-
-export const ADMIN_USERS_FN = `// Edge Function: admin-users
-// مدیریت کاربران — فقط admin (صاحب دفتر) می‌تواند استفاده کند
-// دیپلوی: supabase functions deploy admin-users --no-verify-jwt
-
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-function extractUser(jwt: string): { sub: string } | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return null;
-    let payload = parts[1];
-    payload = payload.replace(/-/g, "+").replace(/_/g, "/");
-    while (payload.length % 4) payload += "=";
-    const data = JSON.parse(atob(payload));
-    if (!data.sub) return null;
-    if (data.exp && data.exp < Date.now() / 1000) return null;
-    return { sub: String(data.sub) };
-  } catch (e) {
-    console.error("extractUser error:", e);
-    return null;
-  }
-}
-
-async function checkAdmin(supabase: any, userId: string): Promise<boolean> {
-  // admin یعنی صاحب دفتری باشد که owner_user_id === خودش
-  const { data } = await supabase
-    .from("ledgers")
-    .select("id")
-    .eq("owner_user_id", userId)
-    .is("archived_at", null)
-    .maybeSingle();
-  return data !== null;
-}
-
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-  const jwt = authHeader.replace("Bearer ", "");
-  const user = extractUser(jwt);
-  if (!user) {
-    return json({ error: "Invalid token" }, 401);
-  }
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-
-  // فقط admin می‌تواند استفاده کند
-  const isAdmin = await checkAdmin(supabase, user.sub);
-  if (!isAdmin) {
-    return json({ error: "Forbidden - admin only" }, 403);
-  }
-
-  // GET: لیست همه کاربران
-  if (req.method === "GET") {
-    const { data, error } = await supabase.auth.admin.listUsers();
-    if (error) {
-      return json({ error: error.message }, 500);
-    }
-    const users = (data.users ?? []).map((u: any) => ({
-      id: u.id,
-      email: u.email,
-      created_at: u.created_at,
-      last_sign_in_at: u.last_sign_in_at,
-      email_confirmed: u.email_confirmed_at != null,
-      display_name: u.user_metadata?.display_name ?? null,
-    }));
-    return json({ users });
-  }
-
-  // POST: ساخت کاربر جدید
-  if (req.method === "POST") {
-    let input: { email: string; password: string; display_name?: string };
-    try {
-      input = await req.json();
-    } catch {
-      return json({ error: "Invalid JSON" }, 400);
-    }
-    if (!input.email || !input.password) {
-      return json({ error: "email and password required" }, 400);
-    }
-    if (input.password.length < 6) {
-      return json({ error: "password must be at least 6 characters" }, 400);
-    }
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: input.email,
-      password: input.password,
-      email_confirm: true,
-      user_metadata: { display_name: input.display_name ?? input.email },
-    });
-    if (error) {
-      return json({ error: error.message }, 400);
-    }
-    // audit log
-    await supabase.from("audit_logs").insert({
-      actor_id: user.sub,
-      action: "ADMIN_CREATE_USER",
-      entity_type: "User",
-      entity_id: data.user.id,
-      result: "success",
-      details: "Created user " + input.email,
-    });
-    return json({
-      ok: true,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        display_name: input.display_name ?? input.email,
-      },
-    });
-  }
-
-  // DELETE: حذف کاربر (با user_id در query)
-  if (req.method === "DELETE") {
-    const url = new URL(req.url);
-    const userId = url.searchParams.get("id");
-    if (!userId) {
-      return json({ error: "id query param required" }, 400);
-    }
-    if (userId === user.sub) {
-      return json({ error: "Cannot delete yourself" }, 400);
-    }
-    const { error } = await supabase.auth.admin.deleteUser(userId);
-    if (error) {
-      return json({ error: error.message }, 400);
-    }
-    await supabase.from("audit_logs").insert({
-      actor_id: user.sub,
-      action: "ADMIN_DELETE_USER",
-      entity_type: "User",
-      entity_id: userId,
-      result: "success",
-      details: "Deleted user " + userId,
-    });
-    return json({ ok: true });
-  }
-
-  return json({ error: "Method not allowed" }, 405);
-});
-`;
-
-// ============================================================
-// Edge Function: admin-backup
-// export همه داده‌ها به JSON — فقط admin
-// مسیر: supabase/functions/admin-backup/index.ts
-// دیپلوی: supabase functions deploy admin-backup --no-verify-jwt
-// ============================================================
-
-export const ADMIN_BACKUP_FN = `// Edge Function: admin-backup
-// export همه جداول به JSON — فقط admin
-// دیپلوی: supabase functions deploy admin-backup --no-verify-jwt
-
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-function extractUser(jwt: string): { sub: string } | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return null;
-    let payload = parts[1];
-    payload = payload.replace(/-/g, "+").replace(/_/g, "/");
-    while (payload.length % 4) payload += "=";
-    const data = JSON.parse(atob(payload));
-    if (!data.sub) return null;
-    if (data.exp && data.exp < Date.now() / 1000) return null;
-    return { sub: String(data.sub) };
-  } catch (e) {
-    console.error("extractUser error:", e);
-    return null;
-  }
-}
-
-async function checkAdmin(supabase: any, userId: string): Promise<boolean> {
-  const { data } = await supabase
-    .from("ledgers")
-    .select("id")
-    .eq("owner_user_id", userId)
-    .is("archived_at", null)
-    .maybeSingle();
-  return data !== null;
-}
-
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-  if (req.method !== "GET") {
-    return json({ error: "Method not allowed" }, 405);
-  }
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-  const jwt = authHeader.replace("Bearer ", "");
-  const user = extractUser(jwt);
-  if (!user) return json({ error: "Invalid token" }, 401);
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-  const isAdmin = await checkAdmin(supabase, user.sub);
-  if (!isAdmin) return json({ error: "Forbidden - admin only" }, 403);
-
-  // export همه جداول (فقط دیتای این admin — یعنی ledgers که owner_user_id === user.sub)
-  const { data: ledgers } = await supabase
-    .from("ledgers")
-    .select("*")
-    .eq("owner_user_id", user.sub);
-  const ledgerIds = (ledgers ?? []).map((l: any) => l.id);
-
-  if (ledgerIds.length === 0) {
-    return json({ error: "No ledgers found for this user" }, 404);
-  }
-
-  const [contacts, categories, transactions, auditLogs, telegramLinks, linkCodes, profiles] = await Promise.all([
-    supabase.from("contacts").select("*").in("ledger_id", ledgerIds),
-    supabase.from("categories").select("*").in("ledger_id", ledgerIds),
-    supabase.from("transactions").select("*").in("ledger_id", ledgerIds),
-    supabase.from("audit_logs").select("*").eq("actor_id", user.sub).order("created_at", { ascending: false }).limit(1000),
-    supabase.from("telegram_links").select("*").in("ledger_id", ledgerIds),
-    supabase.from("link_codes").select("*").in("ledger_id", ledgerIds),
-    supabase.from("profiles").select("*").eq("id", user.sub),
-  ]);
-
-  const backup = {
-    version: "1.0",
-    created_at: new Date().toISOString(),
-    admin_user_id: user.sub,
-    ledgers: ledgers ?? [],
-    profiles: profiles.data ?? [],
-    contacts: contacts.data ?? [],
-    categories: categories.data ?? [],
-    transactions: transactions.data ?? [],
-    audit_logs: auditLogs.data ?? [],
-    telegram_links: telegramLinks.data ?? [],
-    link_codes: linkCodes.data ?? [],
-  };
-
-  // audit
-  await supabase.from("audit_logs").insert({
-    actor_id: user.sub,
-    action: "ADMIN_BACKUP",
-    entity_type: "Database",
-    entity_id: "-",
-    result: "success",
-    details: "Exported backup with " + (transactions.data?.length ?? 0) + " transactions",
-  });
-
-  return json(backup);
-});
-`;
-
-// ============================================================
-// Edge Function: admin-restore
-// import JSON backup — فقط admin
-// مسیر: supabase/functions/admin-restore/index.ts
-// دیپلوی: supabase functions deploy admin-restore --no-verify-jwt
-// ============================================================
-
-export const ADMIN_RESTORE_FN = `// Edge Function: admin-restore
-// import داده‌ها از JSON backup — فقط admin
-// دیپلوی: supabase functions deploy admin-restore --no-verify-jwt
-// توجه: این عملیات رکوردهای موجود را با همان ID جایگزین می‌کند (upsert)
-// ولی رکوردهایی که در backup نیستند را پاک نمی‌کند
-
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-function extractUser(jwt: string): { sub: string } | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return null;
-    let payload = parts[1];
-    payload = payload.replace(/-/g, "+").replace(/_/g, "/");
-    while (payload.length % 4) payload += "=";
-    const data = JSON.parse(atob(payload));
-    if (!data.sub) return null;
-    if (data.exp && data.exp < Date.now() / 1000) return null;
-    return { sub: String(data.sub) };
-  } catch (e) {
-    console.error("extractUser error:", e);
-    return null;
-  }
-}
-
-async function checkAdmin(supabase: any, userId: string): Promise<boolean> {
-  const { data } = await supabase
-    .from("ledgers")
-    .select("id")
-    .eq("owner_user_id", userId)
-    .is("archived_at", null)
-    .maybeSingle();
-  return data !== null;
-}
-
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-  if (req.method !== "POST") {
-    return json({ error: "Method not allowed" }, 405);
-  }
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-  const jwt = authHeader.replace("Bearer ", "");
-  const user = extractUser(jwt);
-  if (!user) return json({ error: "Invalid token" }, 401);
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-  const isAdmin = await checkAdmin(supabase, user.sub);
-  if (!isAdmin) return json({ error: "Forbidden - admin only" }, 403);
-
-  let backup: any;
-  try {
-    backup = await req.json();
-  } catch {
-    return json({ error: "Invalid JSON" }, 400);
-  }
-  if (!backup || !backup.ledgers) {
-    return json({ error: "Invalid backup format - missing ledgers" }, 400);
-  }
-
-  // فقط داده‌های این admin (با همان user_id) را restore کن
-  const stats = { contacts: 0, categories: 0, transactions: 0, telegram_links: 0, link_codes: 0 };
-
-  // برای هر ledger در backup، اگر owner_user_id با user.sub مطابقت دارد، restore کن
-  const validLedgerIds: string[] = [];
-  for (const l of backup.ledgers) {
-    if (l.owner_user_id === user.sub) {
-      validLedgerIds.push(l.id);
-      // upsert ledger
-      await supabase.from("ledgers").upsert(l);
-    }
-  }
-
-  if (validLedgerIds.length === 0) {
-    return json({ error: "No valid ledgers in backup for this admin" }, 400);
-  }
-
-  // contacts
-  if (Array.isArray(backup.contacts)) {
-    const validContacts = backup.contacts.filter((c: any) => validLedgerIds.includes(c.ledger_id));
-    if (validContacts.length > 0) {
-      const { data, error } = await supabase.from("contacts").upsert(validContacts);
-      if (!error) stats.contacts = validContacts.length;
-    }
-  }
-  // categories
-  if (Array.isArray(backup.categories)) {
-    const valid = backup.categories.filter((c: any) => validLedgerIds.includes(c.ledger_id));
-    if (valid.length > 0) {
-      const { error } = await supabase.from("categories").upsert(valid);
-      if (!error) stats.categories = valid.length;
-    }
-  }
-  // transactions
-  if (Array.isArray(backup.transactions)) {
-    const valid = backup.transactions.filter((t: any) => validLedgerIds.includes(t.ledger_id));
-    if (valid.length > 0) {
-      const { error } = await supabase.from("transactions").upsert(valid);
-      if (!error) stats.transactions = valid.length;
-    }
-  }
-  // telegram_links
-  if (Array.isArray(backup.telegram_links)) {
-    const valid = backup.telegram_links.filter((t: any) => validLedgerIds.includes(t.ledger_id));
-    if (valid.length > 0) {
-      const { error } = await supabase.from("telegram_links").upsert(valid);
-      if (!error) stats.telegram_links = valid.length;
-    }
-  }
-  // link_codes
-  if (Array.isArray(backup.link_codes)) {
-    const valid = backup.link_codes.filter((l: any) => validLedgerIds.includes(l.ledger_id));
-    if (valid.length > 0) {
-      const { error } = await supabase.from("link_codes").upsert(valid);
-      if (!error) stats.link_codes = valid.length;
-    }
-  }
-
-  // audit
-  await supabase.from("audit_logs").insert({
-    actor_id: user.sub,
-    action: "ADMIN_RESTORE",
-    entity_type: "Database",
-    entity_id: "-",
-    result: "success",
-    details: "Restored: " + JSON.stringify(stats),
-  });
-
-  return json({ ok: true, stats });
 });
 `;

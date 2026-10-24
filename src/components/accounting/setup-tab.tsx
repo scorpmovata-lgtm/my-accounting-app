@@ -29,6 +29,12 @@ import {
   SCHEMA_SQL,
   TELEGRAM_BOT_FN,
 } from "@/lib/deployment-artifacts";
+import {
+  SEED_DATA_SQL,
+  ADMIN_USERS_FN,
+  ADMIN_BACKUP_FN,
+  ADMIN_RESTORE_FN,
+} from "@/lib/admin-edge-functions";
 
 interface ArtifactCardProps {
   icon: React.ReactNode;
