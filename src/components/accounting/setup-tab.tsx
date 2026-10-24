@@ -216,6 +216,38 @@ export function SetupTab() {
         storageKey="telegram-bot-fn"
       />
 
+      <ArtifactCard
+        icon={<Database className="h-5 w-5" />}
+        title="۴. داده موک برای تست ربات"
+        description="برای تست ربات تلگرام. پیش‌نیاز: حداقل یک کاربر در Authentication → Users ساخته باشی. سپس این SQL را در SQL Editor اجرا کن. کد اتصال: 482319."
+        content={SEED_DATA_SQL}
+        storageKey="seed-data-sql"
+      />
+
+      <ArtifactCard
+        icon={<Code className="h-5 w-5" />}
+        title="۹. Edge Function: admin-users (مدیریت کاربران)"
+        description="مسیر: supabase/functions/admin-users/index.ts. لیست، ساخت و حذف کاربران. فقط admin (صاحب دفتر) دسترسی دارد."
+        content={ADMIN_USERS_FN}
+        storageKey="admin-users-fn"
+      />
+
+      <ArtifactCard
+        icon={<Database className="h-5 w-5" />}
+        title="۱۰. Edge Function: admin-backup (بک‌آپ)"
+        description="مسیر: supabase/functions/admin-backup/index.ts. export همه داده‌های دفتر به JSON. فقط admin."
+        content={ADMIN_BACKUP_FN}
+        storageKey="admin-backup-fn"
+      />
+
+      <ArtifactCard
+        icon={<Database className="h-5 w-5" />}
+        title="۱۱. Edge Function: admin-restore (بازگردانی)"
+        description="مسیر: supabase/functions/admin-restore/index.ts. import داده‌ها از JSON backup. فقط admin."
+        content={ADMIN_RESTORE_FN}
+        storageKey="admin-restore-fn"
+      />
+
       {/* خلاصه امنیتی */}
       <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
         <CardContent className="p-4 sm:p-5">

@@ -1,4 +1,6 @@
 // Auth store — مدیریت وضعیت احراز هویت کاربر با Supabase
+// مهم: برای رفع مشکل refresh، روی onAuthStateChange با INITIAL_SESSION تکیه می‌کنیم
+// و از getSession() فوری پرهیز می‌کنیم (race condition)
 
 import { create } from "zustand";
 import {
@@ -14,7 +16,6 @@ export interface AuthUser {
   email: string | null;
   displayName: string | null;
   ledgerId: string | null;
-  // admin: اگر کاربر صاحب دفتر باشد (ledger.owner_user_id === auth.uid())
   isAdmin: boolean;
 }
 
@@ -41,43 +42,55 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return () => {};
     }
 
-    // مرحله ۱: ابتدا session را از localStorage (persisted) بار کن
-    // این کار برای رفع مشکل refresh ضروری است
-    const initialize = async () => {
-      try {
-        // getSession() session persisted را از localStorage برمی‌گرداند
-        const { data, error } = await client.auth.getSession();
-        if (error || !data.session) {
-          set({ status: "anonymous", user: null });
-          return;
-        }
-        // session موجود است — اکنون user info را fetch کن
-        await get().refresh();
-      } catch (e) {
-        set({ status: "anonymous", user: null });
-      }
-    };
-    initialize();
+    // استراتژی جدید: ابتدا onAuthStateChange را تنظیم کن
+    // سپس با timeout fallback بررسی کن
+    // این کار از race condition جلوگیری می‌کند
 
-    // مرحله ۲: گوش دادن به تغییرات auth برای آینده
+    // ۱. گوش دادن به تغییرات auth
     // INITIAL_SESSION: وقتی session از localStorage بار می‌شود
-    // SIGNED_IN / TOKEN_REFRESHED: وقتی session تغییر می‌کند
+    // SIGNED_IN: وقتی کاربر وارد می‌شود
+    // TOKEN_REFRESHED: وقتی توکن تمدید می‌شود
     // SIGNED_OUT: وقتی کاربر خارج می‌شود
     const { data: subscription } = client.auth.onAuthStateChange(
-      async (event) => {
+      async (event, session) => {
         if (
+          event === "INITIAL_SESSION" ||
           event === "SIGNED_IN" ||
-          event === "TOKEN_REFRESHED" ||
-          event === "INITIAL_SESSION"
+          event === "TOKEN_REFRESHED"
         ) {
-          await get().refresh();
+          if (session) {
+            // session موجود است — user info را fetch کن
+            await get().refresh();
+          } else {
+            // session خالی است — کاربر وارد نشده
+            set({ status: "anonymous", user: null });
+          }
         } else if (event === "SIGNED_OUT") {
           set({ status: "anonymous", user: null });
         }
       }
     );
 
+    // ۲. Fallback: اگر INITIAL_SESSION قبل از تنظیم listener صدا زده شده باشد
+    // بعد از ۲ ثانیه، اگر هنوز loading است، دستی getSession را امتحان کن
+    const fallbackTimer = setTimeout(async () => {
+      const currentStatus = get().status;
+      if (currentStatus === "loading") {
+        try {
+          const { data } = await client.auth.getSession();
+          if (data.session) {
+            await get().refresh();
+          } else {
+            set({ status: "anonymous", user: null });
+          }
+        } catch {
+          set({ status: "anonymous", user: null });
+        }
+      }
+    }, 2000);
+
     return () => {
+      clearTimeout(fallbackTimer);
       subscription.subscription.unsubscribe();
     };
   },
@@ -107,17 +120,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ status: "anonymous", user: null });
         return;
       }
-      // session را از client بگیر (هم از memory، هم از localStorage)
       const { data: sessionData } = await client.auth.getSession();
       if (!sessionData.session) {
         set({ status: "anonymous", user: null });
         return;
       }
       const userId = sessionData.session.user.id;
-      // چک کن که session expired نباشد
       const expiresAt = sessionData.session.expires_at;
       if (expiresAt && expiresAt * 1000 < Date.now()) {
-        // session expired — تلاش برای refresh یا sign out
         set({ status: "anonymous", user: null });
         return;
       }
@@ -127,8 +137,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return;
       }
       const ledgerId = await fetchLedgerId(userId);
-      // admin یعنی صاحب دفتری است که مال خودش است
-      // اگر ledgerId یافت شد، یعنی کاربر صاحب دفتر است (trigger آن را ساخته)
       const isAdmin = ledgerId !== null;
       set({
         status: "authenticated",
