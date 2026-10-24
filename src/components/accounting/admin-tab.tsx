@@ -34,133 +34,101 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  adminBackup,
+  adminListUsers,
   adminCreateUser,
   adminDeleteUser,
-  adminListUsers,
+  adminBackup,
   adminRestore,
+  AdminUser,
+  BackupData,
 } from "@/lib/supabase/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useToast } from "@/hooks/use-toast";
 import { formatJalaliShort, toPersianDigits } from "@/lib/accounting/jalali";
 
-interface User {
-  id: string;
-  email: string;
-  created_at: string;
-  last_sign_in_at: string | null;
-  email_confirmed: boolean;
-  display_name: string | null;
-}
-
 export function AdminTab() {
-  const { toast } = useToast();
   const authUser = useAuthStore((s) => s.user);
   const refresh = useAuthStore((s) => s.refresh);
 
-  const [users, setUsers] = useState<User[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [deleteUserId, setDeleteUserId] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const { toast } = useToast();
 
-  // فرم ساخت کاربر
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+
+  // فرم ساخت کاربر جدید
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [creatingUser, setCreatingUser] = useState(false);
 
-  // backup/restore
+  // پشتیبان‌گیری
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [restoreConfirm, setRestoreConfirm] = useState<{ data: unknown; filename: string } | null>(null);
-
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<BackupData | null>(null);
 
   async function loadUsers() {
     setLoadingUsers(true);
     try {
       const list = await adminListUsers();
       setUsers(list);
-    } catch (e) {
-      toast({
-        title: "خطا در بارگذاری کاربران",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
-      });
     } finally {
       setLoadingUsers(false);
     }
   }
 
+  useEffect(() => {
+    void loadUsers();
+  }, []);
+
   async function handleCreateUser() {
-    if (!newEmail.trim() || !newPassword) {
-      toast({
-        title: "خطا",
-        description: "ایمیل و رمز را وارد کنید.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (newPassword.length < 6) {
-      toast({
-        title: "خطا",
-        description: "رمز باید حداقل ۶ کاراکتر باشد.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setCreating(true);
+    setCreatingUser(true);
     try {
-      const user = await adminCreateUser({
+      const result = await adminCreateUser({
         email: newEmail.trim(),
         password: newPassword,
-        display_name: newDisplayName.trim() || undefined,
+        displayName: newDisplayName.trim() || newEmail.trim(),
       });
-      toast({
-        title: "کاربر ساخته شد",
-        description: `${user.email} (${user.display_name})`,
-      });
-      setNewEmail("");
-      setNewPassword("");
-      setNewDisplayName("");
-      setShowCreateDialog(false);
-      await loadUsers();
-    } catch (e) {
-      toast({
-        title: "خطا در ساخت کاربر",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
-      });
+      if (result.ok) {
+        toast({
+          title: "کاربر ساخته شد",
+          description: `حساب ${newEmail.trim()} ایجاد شد.`,
+        });
+        setNewEmail("");
+        setNewPassword("");
+        setNewDisplayName("");
+        await loadUsers();
+      } else {
+        toast({
+          title: "خطا در ساخت کاربر",
+          description: result.error ?? "خطای ناشناخته",
+          variant: "destructive",
+        });
+      }
     } finally {
-      setCreating(false);
+      setCreatingUser(false);
     }
   }
 
-  async function handleDeleteUser() {
-    if (!deleteUserId) return;
-    setDeleting(true);
-    try {
-      await adminDeleteUser(deleteUserId);
+  async function handleDeleteUser(userId: string, email: string | null) {
+    const ok = await adminDeleteUser(userId);
+    if (ok) {
       toast({
         title: "کاربر حذف شد",
-        description: "کاربر با موفقیت حذف شد.",
+        description: email
+          ? `حساب ${email} حذف شد.`
+          : "کاربر حذف شد.",
       });
-      setDeleteUserId(null);
       await loadUsers();
-    } catch (e) {
+    } else {
       toast({
         title: "خطا در حذف کاربر",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        description: "عملیات ناموفق بود. ممکن است ادمین نباشید یا اتصال قطع شده باشد.",
         variant: "destructive",
       });
-    } finally {
-      setDeleting(false);
     }
   }
 
@@ -168,99 +136,109 @@ export function AdminTab() {
     setBackingUp(true);
     try {
       const data = await adminBackup();
+      if (!data) {
+        toast({
+          title: "خطا در پشتیبان‌گیری",
+          description: "دریافت داده ناموفق بود.",
+          variant: "destructive",
+        });
+        return;
+      }
+      // دانلود به‌عنوان JSON
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `accounting-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      const stamp = formatJalaliShort(new Date()).replace(/\//g, "-");
+      a.download = `accounting-backup-${stamp}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast({
-        title: "بک‌آپ ایجاد شد",
-        description: "فایل JSON دانلود شد.",
-      });
-    } catch (e) {
-      toast({
-        title: "خطا در بک‌آپ",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
+        title: "پشتیبان‌گیری انجام شد",
+        description: `فایل دانلود شد — ${toPersianDigits(
+          (data.transactions ?? []).length
+        )} تراکنش.`,
       });
     } finally {
       setBackingUp(false);
     }
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function handleRestoreFile(file: File) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const data = JSON.parse(ev.target?.result as string);
-        if (!data.ledgers) {
+        const text = ev.target?.result as string;
+        const parsed = JSON.parse(text);
+        if (!parsed.ledgers) {
           toast({
-            title: "خطا",
-            description: "فایل بک‌آپ معتبر نیست (فیلد ledgers پیدا نشد).",
+            title: "فایل نامعتبر",
+            description: "این فایل backup معتبر نیست (فیلد ledgers موجود نیست).",
             variant: "destructive",
           });
           return;
         }
-        setRestoreConfirm({ data, filename: file.name });
-      } catch (err) {
+        setPendingRestore(parsed as BackupData);
+      } catch {
         toast({
-          title: "خطا",
+          title: "خطا در خواندن فایل",
           description: "فایل JSON معتبر نیست.",
           variant: "destructive",
         });
       }
     };
     reader.readAsText(file);
-    // reset input
-    e.target.value = "";
   }
 
-  async function handleRestore() {
-    if (!restoreConfirm) return;
+  async function handleRestoreConfirm() {
+    if (!pendingRestore) return;
     setRestoring(true);
     try {
-      const result = await adminRestore(restoreConfirm.data);
-      toast({
-        title: "بازگردانی شد",
-        description: `آمار: ${Object.entries(result.stats)
-          .map(([k, v]) => `${translateStatKey(k)}: ${toPersianDigits(v as number)}`)
-          .join("، ")}`,
-      });
-      setRestoreConfirm(null);
-      // refresh data
-      await refresh();
-    } catch (e) {
-      toast({
-        title: "خطا در بازگردانی",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
-      });
+      const result = await adminRestore(pendingRestore);
+      if (result.ok) {
+        toast({
+          title: "بازگردانی انجام شد",
+          description: "داده‌ها از فایل backup بازیابی شد.",
+        });
+        await refresh();
+      } else {
+        toast({
+          title: "خطا در بازگردانی",
+          description: result.error ?? "خطای ناشناخته",
+          variant: "destructive",
+        });
+      }
     } finally {
       setRestoring(false);
+      setPendingRestore(null);
     }
   }
 
   return (
     <div className="space-y-4">
-      {/* معرفی */}
-      <Card className="border-primary/30 bg-primary/5">
+      {/* هشدار ادمین */}
+      <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
         <CardContent className="p-4 sm:p-5">
           <div className="flex items-start gap-3">
-            <Shield className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-            <div className="text-sm space-y-2">
-              <div className="font-medium">پنل مدیریت (ادمین)</div>
+            <Shield className="h-5 w-5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="text-sm space-y-1">
+              <div className="font-medium text-amber-800 dark:text-amber-300">
+                پنل مدیریت (ادمین)
+              </div>
               <p className="text-muted-foreground leading-relaxed">
-                {authUser
-                  ? `به‌عنوان ادمین (${authUser.displayName ?? authUser.email}) وارد شده‌ای.`
-                  : "این بخش فقط برای ادمین قابل دسترس است."}
+                شما به‌عنوان صاحب دفتر به این پنل دسترسی دارید. اینجا می‌توانید
+                کاربران جدید بسازید، کاربران را حذف کنید، و از داده‌ها پشتیبان
+                بگیرید یا بازگردانی کنید.
+                {authUser?.displayName && (
+                  <>
+                    {" "}— کاربر فعال:{" "}
+                    <span className="font-medium">{authUser.displayName}</span>
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -269,8 +247,8 @@ export function AdminTab() {
 
       {/* مدیریت کاربران */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 flex-wrap">
             <Users className="h-5 w-5" />
             مدیریت کاربران
             <Badge variant="secondary" className="mr-auto">
@@ -278,266 +256,307 @@ export function AdminTab() {
             </Badge>
             <Button
               size="sm"
-              onClick={() => setShowCreateDialog(true)}
+              variant="outline"
+              onClick={loadUsers}
+              disabled={loadingUsers}
             >
-              <UserPlus className="h-4 w-4 ml-1" />
-              کاربر جدید
+              {loadingUsers ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              به‌روزرسانی
             </Button>
           </CardTitle>
           <CardDescription>
-            کاربرانی که می‌توانند وارد اپ شوند. هر کاربر می‌تواند با email + password
-            که تو تعیین می‌کنی وارد شود.
+            ساخت حساب جدید برای اعضای دفتر و حذف حساب‌های غیرفعال.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
-          {loadingUsers ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : users.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground py-8">
-              هیچ کاربری ثبت نشده. دکمه «کاربر جدید» را بزن.
-            </div>
-          ) : (
-            <ScrollArea className="h-72">
+        <CardContent className="space-y-4">
+          {/* فهرست کاربران */}
+          <ScrollArea className="h-[280px] rounded-md border">
+            {users.length === 0 ? (
+              <div className="text-center text-sm text-muted-foreground py-8">
+                کاربری یافت نشد.
+              </div>
+            ) : (
               <ul className="divide-y divide-border">
                 {users.map((u) => (
-                  <li key={u.id} className="px-4 py-3 flex items-center justify-between gap-2">
+                  <li
+                    key={u.id}
+                    className="px-3 py-2.5 flex items-center justify-between gap-2"
+                  >
                     <div className="min-w-0">
-                      <div className="font-medium text-sm flex items-center gap-2">
-                        <span className="truncate">{u.display_name ?? u.email}</span>
-                        {u.id === authUser?.id && (
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 text-xs">
-                            تو
-                          </Badge>
+                      <div className="font-medium text-sm truncate">
+                        {u.displayName ?? "بدون نام"}
+                      </div>
+                      <div className="text-xs text-muted-foreground" dir="ltr">
+                        {u.email ?? "—"} •{" "}
+                        {u.emailConfirmed ? "تأیید ایمیل ✓" : "بدون تأیید ایمیل"}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        عضو از {formatJalaliShort(u.createdAt)}
+                        {u.lastSignInAt && (
+                          <> • آخرین ورود: {formatJalaliShort(u.lastSignInAt)}</>
                         )}
-                      </div>
-                      <div className="text-xs text-muted-foreground truncate" dir="ltr">
-                        {u.email}
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                        <span>ساخته‌شده: {formatJalaliShort(u.created_at)}</span>
-                        {u.email_confirmed ? (
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 text-xs">
-                            تأیید شده
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-amber-50 text-amber-700 text-xs">
-                            تأیید نشده
+                        {u.id === authUser?.id && (
+                          <Badge variant="secondary" className="mr-2 ml-1">
+                            شما
                           </Badge>
                         )}
                       </div>
                     </div>
-                    {u.id !== authUser?.id && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setDeleteUserId(u.id)}
-                        className="text-rose-700 hover:bg-rose-50"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
+                    <div className="shrink-0">
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={u.id === authUser?.id}
+                            title={
+                              u.id === authUser?.id
+                                ? "نمی‌توانید خودتان را حذف کنید"
+                                : "حذف کاربر"
+                            }
+                          >
+                            <Trash2 className="h-4 w-4 text-rose-600" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>حذف کاربر</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              آیا مطمئنید می‌خواهید حساب{" "}
+                              <span dir="ltr" className="font-medium">
+                                {u.email ?? "بدون ایمیل"}
+                              </span>{" "}
+                              را حذف کنید؟ این عملیات غیرقابل بازگشت است و تمام
+                              داده‌های مرتبط (دفتر، تراکنش‌ها) نیز پاک می‌شود.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>انصراف</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="bg-rose-600 hover:bg-rose-700 text-white"
+                              onClick={() => handleDeleteUser(u.id, u.email)}
+                            >
+                              بله، حذف کن
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </li>
                 ))}
               </ul>
-            </ScrollArea>
-          )}
-        </CardContent>
-      </Card>
+            )}
+          </ScrollArea>
 
-      {/* بک‌آپ و بازگردانی */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Database className="h-5 w-5" />
-            بک‌آپ و بازگردانی
-          </CardTitle>
-          <CardDescription>
-            کل داده‌های دفتر خودت را به فایل JSON export کن (شامل: تراکنش‌ها،
-            طرف حساب‌ها، سرفصل‌ها، اتصال‌های تلگرام، ممیزی).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={handleBackup} disabled={backingUp}>
-              {backingUp ? (
-                <>
-                  <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                  در حال بک‌آپ...
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4 ml-1" />
-                  دریافت بک‌آپ
-                </>
-              )}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={restoring}
-            >
-              {restoring ? (
-                <>
-                  <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                  در حال بازگردانی...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-4 w-4 ml-1" />
-                  بازگردانی از فایل
-                </>
-              )}
-            </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-          </div>
-          <div className="text-xs text-muted-foreground bg-muted/30 p-3 rounded-md">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <div>
-                <strong>توجه:</strong> بازگردانی رکوردهای موجود را با همان ID
-                جایگزین می‌کند (upsert) ولی رکوردهایی که در فایل نیستند را پاک
-                نمی‌کند. برای پاک‌سازی کامل، ابتدا در Supabase → Table Editor
-                رکوردها را پاک کن، سپس restore کن.
+          {/* فرم ساخت کاربر */}
+          <div className="rounded-md border p-3 bg-muted/20 space-y-3">
+            <div className="text-sm font-medium flex items-center gap-2">
+              <UserPlus className="h-4 w-4" />
+              ساخت کاربر جدید
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="new-email" className="text-xs">
+                  ایمیل
+                </Label>
+                <Input
+                  id="new-email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  dir="ltr"
+                  className="text-left"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="new-pass" className="text-xs">
+                  رمز عبور (حداقل ۶ کاراکتر)
+                </Label>
+                <Input
+                  id="new-pass"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="••••••"
+                  dir="ltr"
+                  className="text-left"
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="new-name" className="text-xs">
+                  نام نمایشی
+                </Label>
+                <Input
+                  id="new-name"
+                  value={newDisplayName}
+                  onChange={(e) => setNewDisplayName(e.target.value)}
+                  placeholder="مثلاً: علی رضایی"
+                />
               </div>
             </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  disabled={
+                    creatingUser ||
+                    !newEmail.trim() ||
+                    !newPassword ||
+                    newPassword.length < 6
+                  }
+                >
+                  {creatingUser ? (
+                    <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+                  ) : (
+                    <UserPlus className="h-4 w-4 ml-1" />
+                  )}
+                  ساخت کاربر
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>تأیید ساخت کاربر</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    کاربر جدید با ایمیل{" "}
+                    <span dir="ltr" className="font-medium">
+                      {newEmail}
+                    </span>{" "}
+                    ساخته می‌شود. رمز به‌صورت تأییدشده ثبت می‌شود و کاربر می‌تواند
+                    بلافاصله وارد شود.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>انصراف</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCreateUser}>
+                    بله، بساز
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </CardContent>
       </Card>
 
-      {/* دیالوگ ساخت کاربر */}
-      <AlertDialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>کاربر جدید</AlertDialogTitle>
-            <AlertDialogDescription>
-              یک کاربر جدید بساز. این کاربر می‌تواند با email + password وارد شود.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="new-email">ایمیل</Label>
-              <Input
-                id="new-email"
-                type="email"
-                value={newEmail}
-                onChange={(e) => setNewEmail(e.target.value)}
-                placeholder="user@example.com"
-                dir="ltr"
-                className="text-left"
+      {/* پشتیبان‌گیری و بازگردانی */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            پشتیبان‌گیری و بازگردانی
+          </CardTitle>
+          <CardDescription>
+            از تمام داده‌های دفتر (دفترها، مخاطبین، سرفصل‌ها، تراکنش‌ها،
+            اتصال‌های تلگرام) به‌صورت یک فایل JSON پشتیبان بگیرید یا داده‌های
+            قبلی را بازگردانی کنید.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Button
+              variant="outline"
+              onClick={handleBackup}
+              disabled={backingUp}
+              className="h-auto py-3 justify-start"
+            >
+              {backingUp ? (
+                <Loader2 className="h-5 w-5 ml-2 animate-spin shrink-0" />
+              ) : (
+                <Download className="h-5 w-5 ml-2 shrink-0" />
+              )}
+              <div className="flex flex-col items-start text-right">
+                <span className="font-medium">دانلود فایل پشتیبان</span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  export کامل به‌صورت JSON
+                </span>
+              </div>
+            </Button>
+
+            <div className="contents">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleRestoreFile(f);
+                  // reset input value تا فایل یکسان دوباره قابل انتخاب باشد
+                  e.target.value = "";
+                }}
               />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="new-password">رمز</Label>
-              <Input
-                id="new-password"
-                type="text"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="حداقل ۶ کاراکتر"
-                dir="ltr"
-                className="text-left"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="new-display-name">نام نمایشی (اختیاری)</Label>
-              <Input
-                id="new-display-name"
-                value={newDisplayName}
-                onChange={(e) => setNewDisplayName(e.target.value)}
-                placeholder="مثلاً: محمد قاسمی"
-              />
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={restoring}
+                className="h-auto py-3 justify-start"
+              >
+                <Upload className="h-5 w-5 ml-2 shrink-0" />
+                <div className="flex flex-col items-start text-right">
+                  <span className="font-medium">بازگردانی از فایل</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    انتخاب فایل JSON قبلی
+                  </span>
+                </div>
+              </Button>
             </div>
           </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>انصراف</AlertDialogCancel>
-            <Button onClick={handleCreateUser} disabled={creating}>
-              {creating ? (
-                <>
-                  <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                  در حال ساخت...
-                </>
-              ) : (
-                "ساخت کاربر"
-              )}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
-      {/* دیالوگ تأیید حذف کاربر */}
-      <AlertDialog open={!!deleteUserId} onOpenChange={(o) => !o && setDeleteUserId(null)}>
+          <div className="text-xs text-muted-foreground pt-2 border-t flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>
+              بازگردانی رکوردهای موجود را با همان ID جایگزین می‌کند (upsert) ولی
+              رکوردهایی که در فایل نیستند را پاک نمی‌کند. این عملیات در audit logs
+              ثبت می‌شود.
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* دیالوگ تأیید بازگردانی */}
+      <AlertDialog
+        open={!!pendingRestore}
+        onOpenChange={(o) => {
+          if (!o) setPendingRestore(null);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>حذف کاربر</AlertDialogTitle>
+            <AlertDialogTitle>تأیید بازگردانی</AlertDialogTitle>
             <AlertDialogDescription>
-              آیا مطمئنی؟ این کار قابل بازگشت نیست. همه داده‌های مربوط به این کاربر
-              (دفتر، تراکنش‌ها، طرف حساب‌ها) حذف خواهد شد.
+              {pendingRestore && (
+                <>
+                  این فایل شامل:{" "}
+                  {toPersianDigits((pendingRestore.transactions ?? []).length)}{" "}
+                  تراکنش،{" "}
+                  {toPersianDigits((pendingRestore.contacts ?? []).length)}{" "}
+                  مخاطب،{" "}
+                  {toPersianDigits((pendingRestore.categories ?? []).length)}{" "}
+                  سرفصل است. تاریخ پشتیبان:{" "}
+                  {formatJalaliShort(pendingRestore.created_at ?? new Date().toISOString())}.
+                  ادامه می‌دهید؟
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>انصراف</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteUser}
-              disabled={deleting}
-              className="bg-rose-700 hover:bg-rose-800 text-white"
+              onClick={handleRestoreConfirm}
+              disabled={restoring}
             >
-              {deleting ? (
-                <>
-                  <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                  در حال حذف...
-                </>
-              ) : (
-                "حذف"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* دیالوگ تأیید بازگردانی */}
-      <AlertDialog open={!!restoreConfirm} onOpenChange={(o) => !o && setRestoreConfirm(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>بازگردانی داده‌ها</AlertDialogTitle>
-            <AlertDialogDescription>
-              فایل <code className="text-foreground">{restoreConfirm?.filename}</code> انتخاب شده.
-              این کار داده‌های موجود را با داده‌های فایل جایگزین می‌کند. ادامه می‌دهی؟
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>انصراف</AlertDialogCancel>
-            <Button onClick={handleRestore} disabled={restoring}>
               {restoring ? (
-                <>
-                  <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                  در حال بازگردانی...
-                </>
+                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
               ) : (
-                "بازگردانی کن"
+                <CheckCircle2 className="h-4 w-4 ml-1" />
               )}
-            </Button>
+              بله، بازگردانی کن
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
   );
-}
-
-function translateStatKey(key: string): string {
-  switch (key) {
-    case "contacts": return "طرف حساب";
-    case "categories": return "سرفصل";
-    case "transactions": return "تراکنش";
-    case "telegram_links": return "اتصال تلگرام";
-    case "link_codes": return "کد اتصال";
-    default: return key;
-  }
 }

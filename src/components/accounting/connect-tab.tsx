@@ -26,419 +26,390 @@ import { Badge } from "@/components/ui/badge";
 import { useAuthStore } from "@/store/auth-store";
 import { useAccountingStore } from "@/store/accounting-store";
 import {
-  clearSupabaseConfig,
   getSupabaseConfig,
   setSupabaseConfig,
-  type SupabaseConfig,
+  clearSupabaseConfig,
+  SupabaseConfig,
 } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 export function ConnectTab() {
-  const { toast } = useToast();
   const authStatus = useAuthStore((s) => s.status);
   const authUser = useAuthStore((s) => s.user);
-  const authError = useAuthStore((s) => s.error);
   const login = useAuthStore((s) => s.login);
   const logout = useAuthStore((s) => s.logout);
-  const init = useAuthStore((s) => s.init);
-  const refresh = useAuthStore((s) => s.refresh);
+  const authError = useAuthStore((s) => s.error);
   const clearError = useAuthStore((s) => s.clearError);
+  const refresh = useAuthStore((s) => s.refresh);
 
   const realMode = useAccountingStore((s) => s.realMode);
   const activateRealMode = useAccountingStore((s) => s.activateRealMode);
   const deactivateRealMode = useAccountingStore((s) => s.deactivateRealMode);
-  const loadRealData = useAccountingStore((s) => s.loadRealData);
 
-  // مهم: localStorage فقط بعد از mount خوانده می‌شود تا hydration mismatch نباشد
-  const [config, setConfig] = useState<SupabaseConfig | null>(null);
+  const { toast } = useToast();
+
+  // برای جلوگیری از hydration mismatch، localStorage را فقط بعد از mount می‌خوانیم
   const [mounted, setMounted] = useState(false);
-  const [urlInput, setUrlInput] = useState("");
-  const [anonInput, setAnonInput] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [config, setConfig] = useState<SupabaseConfig | null>(null);
 
-  // بعد از mount: localStorage را بخوان
-  // init() در AppShell فراخوانی می‌شود (نه اینجا)
   useEffect(() => {
-    setConfig(getSupabaseConfig());
     setMounted(true);
+    setConfig(getSupabaseConfig());
   }, []);
 
-  // وقتی کاربر login می‌کند، accounting store را به حالت واقعی ببر
+  // فعال‌سازی real mode هنگام login موفق
   useEffect(() => {
-    if (authStatus === "authenticated" && authUser?.ledgerId && !realMode) {
-      activateRealMode(
-        authUser.ledgerId,
-        authUser.displayName ?? authUser.email ?? "کاربر"
-      );
-    } else if (authStatus === "anonymous" && realMode) {
+    if (authStatus === "authenticated" && authUser && !realMode && config) {
+      // activate real mode با ledgerId کاربر (admin بدون ledgerId است)
+      if (authUser.ledgerId) {
+        void activateRealMode(authUser.ledgerId, authUser.displayName ?? "صاحب دفتر");
+      }
+    }
+    if (authStatus === "anonymous" && realMode) {
       deactivateRealMode();
     }
-  }, [authStatus, authUser, realMode]);
+  }, [authStatus, authUser, realMode, config, activateRealMode, deactivateRealMode]);
+
+  const [url, setUrl] = useState("");
+  const [anonKey, setAnonKey] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
 
   function handleSaveConfig() {
-    if (!urlInput.trim() || !anonInput.trim()) {
+    setSavingConfig(true);
+    clearError();
+    try {
+      const u = url.trim();
+      const k = anonKey.trim();
+      if (!u || !k) {
+        toast({
+          title: "خطا",
+          description: "URL و anon key را وارد کنید.",
+          variant: "destructive",
+        });
+        setSavingConfig(false);
+        return;
+      }
+      // اعتبارسنجی ساده URL
+      try {
+        new URL(u);
+      } catch {
+        toast({
+          title: "خطا",
+          description: "URL نامعتبر است. مثال: https://xyz.supabase.co",
+          variant: "destructive",
+        });
+        setSavingConfig(false);
+        return;
+      }
+      setSupabaseConfig(u, k);
       toast({
-        title: "خطا",
-        description: "هم URL و هم anon key باید پر شوند.",
-        variant: "destructive",
+        title: "تنظیمات ذخیره شد",
+        description: "صفحه برای اعمال تنظیمات بارگذاری مجدد می‌شود.",
       });
-      return;
+      // Reload صفحه برای ساخت کلاینت جدید با تنظیمات جدید
+      setTimeout(() => {
+        window.location.reload();
+      }, 600);
+    } finally {
+      setSavingConfig(false);
     }
-    setSupabaseConfig(urlInput.trim(), anonInput.trim());
-    toast({
-      title: "ذخیره شد",
-      description:
-        "پیکربندی Supabase ذخیره شد. صفحه refresh می‌شود تا اتصال برقرار شود.",
-    });
-    // صفحه را reload کن تا AppShell init() با config جدید فراخوانی شود
-    setTimeout(() => {
-      window.location.reload();
-    }, 1000);
   }
 
-  function handleClearConfig() {
+  async function handleClearConfig() {
     clearSupabaseConfig();
     setConfig(null);
-    deactivateRealMode();
+    setUrl("");
+    setAnonKey("");
     toast({
-      title: "پاک شد",
-      description: "پیکربندی Supabase پاک شد.",
+      title: "تنظیمات پاک شد",
+      description: "برای اتصال مجدد، URL و anon key جدید وارد کنید.",
     });
-    setTimeout(() => {
-      window.location.reload();
-    }, 1000);
   }
 
   async function handleLogin() {
-    if (!email.trim() || !password) {
-      toast({
-        title: "خطا",
-        description: "ایمیل و رمز را وارد کنید.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setSubmitting(true);
+    setSigningIn(true);
     clearError();
     try {
       await login(email.trim(), password);
       toast({
-        title: "وارد شدید",
-        description: "به دفتر حسابداری خودتان خوش آمدید.",
+        title: "ورود موفق",
+        description: "به دفتر حسابداری متصل شدید.",
       });
-    } catch {
-      // error is in authError
+      setEmail("");
+      setPassword("");
+    } catch (e) {
+      toast({
+        title: "خطا در ورود",
+        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        variant: "destructive",
+      });
     } finally {
-      setSubmitting(false);
+      setSigningIn(false);
     }
   }
 
   async function handleLogout() {
     await logout();
     toast({
-      title: "خارج شدید",
-      description: "جلسه پایان یافت.",
+      title: "خروج انجام شد",
+      description: "نشست شما بسته شد.",
     });
   }
 
   async function handleRefresh() {
-    setSubmitting(true);
-    try {
-      await refresh();
-      await loadRealData();
-      toast({
-        title: "بازخوانی",
-        description: "داده‌ها از Supabase تازه شدند.",
-      });
-    } catch (e) {
-      toast({
-        title: "خطا",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
-    }
+    await refresh();
+    toast({
+      title: "وضعیت به‌روزرسانی شد",
+    });
   }
 
-  const isConfigured = config !== null;
+  const isLoggedIn = authStatus === "authenticated" && !!authUser;
+  const hasConfig = !!config;
 
-  return (
-    <div className="space-y-4">
-      <Card className="border-primary/30 bg-primary/5">
-        <CardContent className="p-4 sm:p-5">
-          <div className="flex items-start gap-3">
-            <Cloud className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-            <div className="text-sm space-y-2">
-              <div className="font-medium">فاز ۳ — اتصال به Supabase واقعی</div>
-              <p className="text-muted-foreground leading-relaxed">
-                وقتی وارد شوی، همه تب‌ها (داشبورد، تراکنش‌ها، ...) داده واقعی
-                نشان می‌دهند و فرم ثبت تراکنش از طریق Edge Function امن ثبت
-                می‌کند.
-              </p>
-            </div>
+  // پیشگیری از رندر پیش از mount (جلوگیری از hydration mismatch)
+  if (!mounted) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin ml-2" />
+            در حال بارگذاری...
           </div>
         </CardContent>
       </Card>
+    );
+  }
 
+  return (
+    <div className="space-y-4">
+      {/* کارت وضعیت */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 flex-wrap">
             <Database className="h-5 w-5" />
-            مرحله ۱ — پیکربندی Supabase
-            {isConfigured ? (
-              <Badge className="mr-auto bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                <CheckCircle2 className="h-3 w-3 ml-1" />
-                ذخیره شده
+            وضعیت اتصال
+            <div className="flex flex-wrap gap-1 mr-auto">
+              <Badge
+                variant="outline"
+                className={
+                  hasConfig
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                    : "bg-muted text-muted-foreground"
+                }
+              >
+                {hasConfig ? "تنظیمات ✓" : "بدون تنظیمات"}
               </Badge>
-            ) : (
-              <Badge variant="outline" className="mr-auto text-muted-foreground">
-                <AlertCircle className="h-3 w-3 ml-1" />
-                نیاز به تنظیم
+              <Badge
+                variant="outline"
+                className={
+                  isLoggedIn
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                    : "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+                }
+              >
+                {isLoggedIn ? "وارد شده ✓" : "میهمان"}
               </Badge>
-            )}
+              <Badge
+                variant="outline"
+                className={
+                  realMode
+                    ? "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+                    : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                }
+              >
+                {realMode ? "داده واقعی" : "داده موک"}
+              </Badge>
+            </div>
           </CardTitle>
           <CardDescription>
-            این مقادیر را از داشبورد Supabase → Settings → API بگیر.
+            اتصال به پروژه Supabase شما. پس از ذخیره تنظیمات و ورود، اپ به‌جای داده موک،
+            داده واقعی شما را نشان می‌دهد.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {isConfigured ? (
-            <div className="space-y-2">
-              <div className="text-sm">
-                <span className="text-muted-foreground">Project URL:</span>{" "}
-                <code
-                  className="text-foreground bg-muted px-1 py-0.5 rounded text-xs"
-                  dir="ltr"
-                >
-                  {config?.url}
-                </code>
+        <CardContent className="space-y-3 text-sm">
+          {hasConfig && (
+            <div className="rounded-md border p-3 bg-muted/30">
+              <div className="font-medium mb-1 flex items-center gap-2">
+                <Cloud className="h-4 w-4" />
+                پروژه Supabase
               </div>
-              <div className="text-sm">
-                <span className="text-muted-foreground">anon key:</span>{" "}
-                <code
-                  className="text-foreground bg-muted px-1 py-0.5 rounded text-xs"
-                  dir="ltr"
-                >
-                  {config?.anonKey.slice(0, 20)}...
-                </code>
+              <div className="text-xs text-muted-foreground" dir="ltr">
+                {config.url}
               </div>
-              <div className="flex gap-2 pt-2">
-                <Button variant="outline" size="sm" onClick={handleClearConfig}>
-                  پاک کردن پیکربندی
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground pt-2">
-                این مقادیر در localStorage مرورگر شما ذخیره شده‌اند.
-              </p>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="grid gap-2">
-                <Label htmlFor="supabase-url">Project URL</Label>
-                <Input
-                  id="supabase-url"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="https://abcd.supabase.co"
-                  dir="ltr"
-                  className="text-left"
-                />
+          )}
+          {isLoggedIn && authUser && (
+            <div className="rounded-md border p-3 bg-muted/30">
+              <div className="font-medium mb-1 flex items-center gap-2">
+                <User className="h-4 w-4" />
+                کاربر
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="supabase-anon">anon public key</Label>
-                <Input
-                  id="supabase-anon"
-                  value={anonInput}
-                  onChange={(e) => setAnonInput(e.target.value)}
-                  placeholder="eyJhbGciOi..."
-                  dir="ltr"
-                  className="text-left"
-                />
+              <div className="text-xs">
+                {authUser.displayName ?? "بدون نام"} • {authUser.email ?? "بدون ایمیل"}
+                {authUser.isAdmin && (
+                  <Badge variant="secondary" className="mr-2">
+                    ادمین
+                  </Badge>
+                )}
               </div>
-              <Button
-                onClick={handleSaveConfig}
-                disabled={!urlInput.trim() || !anonInput.trim()}
-              >
-                ذخیره پیکربندی
+            </div>
+          )}
+          <div className="flex gap-2 flex-wrap">
+            {isLoggedIn && (
+              <Button size="sm" variant="outline" onClick={handleRefresh}>
+                <RefreshCw className="h-4 w-4 ml-1" />
+                به‌روزرسانی
               </Button>
+            )}
+            {hasConfig && (
+              <Button size="sm" variant="ghost" onClick={handleClearConfig}>
+                پاک کردن تنظیمات
+              </Button>
+            )}
+          </div>
+          {authError && (
+            <div className="rounded-md border border-rose-200 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30 p-3 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{authError}</span>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {isConfigured && (
+      {/* مرحله ۱: تنظیمات Supabase */}
+      {!hasConfig && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <LogIn className="h-5 w-5" />
-              مرحله ۲ — ورود
-              {authStatus === "authenticated" && (
-                <Badge className="mr-auto bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  <CheckCircle2 className="h-3 w-3 ml-1" />
-                  وارد شده
-                </Badge>
-              )}
-              {authStatus === "anonymous" && (
-                <Badge
-                  variant="outline"
-                  className="mr-auto text-amber-700 border-amber-300"
-                >
-                  <AlertCircle className="h-3 w-3 ml-1" />
-                  وارد نشده
-                </Badge>
-              )}
-              {authStatus === "loading" && (
-                <Badge variant="outline" className="mr-auto">
-                  <Loader2 className="h-3 w-3 ml-1 animate-spin" />
-                  در حال بررسی
-                </Badge>
-              )}
+            <CardTitle className="flex items-center gap-2">
+              <Cloud className="h-5 w-5" />
+              مرحله ۱: تنظیمات Supabase
             </CardTitle>
             <CardDescription>
-              با همان حسابی که در Authentication → Users ساختی وارد شو.
+              URL پروژه و anon key را از داشبارد Supabase → Settings → API بردارید.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {authStatus === "authenticated" && authUser ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/20">
-                  <User className="h-5 w-5 text-emerald-700 dark:text-emerald-300" />
-                  <div className="text-sm">
-                    <div className="font-medium">
-                      {authUser.displayName ?? "کاربر"}
-                    </div>
-                    <div className="text-muted-foreground" dir="ltr">
-                      {authUser.email}
-                    </div>
-                  </div>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  شناسه دفتر:{" "}
-                  <code className="text-foreground" dir="ltr">
-                    {authUser.ledgerId?.slice(0, 8)}...
-                  </code>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleLogout}>
-                    <LogOut className="h-4 w-4 ml-1" />
-                    خروج
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleRefresh}
-                    disabled={submitting}
-                  >
-                    {submitting ? (
-                      <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4 ml-1" />
-                    )}
-                    بازخوانی داده
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="grid gap-2">
-                  <Label htmlFor="email">ایمیل</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="test@example.com"
-                    dir="ltr"
-                    className="text-left"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="password">رمز</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    dir="ltr"
-                    className="text-left"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleLogin();
-                    }}
-                  />
-                </div>
-                {authError && (
-                  <div className="text-sm text-rose-700 dark:text-rose-400 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    {authError}
-                  </div>
-                )}
-                <Button onClick={handleLogin} disabled={submitting}>
-                  {submitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                      در حال ورود...
-                    </>
-                  ) : (
-                    "ورود"
-                  )}
-                </Button>
-              </div>
-            )}
+            <div className="grid gap-2">
+              <Label htmlFor="sb-url">URL پروژه</Label>
+              <Input
+                id="sb-url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://xyz.supabase.co"
+                dir="ltr"
+                className="text-left"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="sb-anon">anon key</Label>
+              <Input
+                id="sb-anon"
+                value={anonKey}
+                onChange={(e) => setAnonKey(e.target.value)}
+                placeholder="eyJhbGci..."
+                dir="ltr"
+                className="text-left font-mono"
+              />
+            </div>
+            <Button
+              onClick={handleSaveConfig}
+              disabled={savingConfig || !url.trim() || !anonKey.trim()}
+            >
+              {savingConfig ? (
+                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 ml-1" />
+              )}
+              ذخیره تنظیمات
+            </Button>
+            <div className="text-xs text-muted-foreground pt-2 border-t">
+              راهنما: anon key یک کلید عمومی است که با RLS محدود شده است. این
+              کلید به‌تنهایی اجازه دسترسی به داده‌های دیگر کاربران را نمی‌دهد.
+            </div>
           </CardContent>
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Cloud className="h-5 w-5" />
-            وضعیت فعلی
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center justify-between p-2 rounded-md bg-muted/50">
-              <span>پیکربندی Supabase</span>
-              {isConfigured ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+      {/* مرحله ۲: ورود */}
+      {hasConfig && !isLoggedIn && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <LogIn className="h-5 w-5" />
+              مرحله ۲: ورود
+            </CardTitle>
+            <CardDescription>
+              با حساب Supabase Auth خود وارد شوید. اگر کاربری ندارید، ادمین می‌تواند
+              از تب «مدیریت» برای شما حساب بسازد.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-2">
+              <Label htmlFor="login-email">ایمیل</Label>
+              <Input
+                id="login-email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                dir="ltr"
+                className="text-left"
+                autoComplete="email"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="login-pass">رمز عبور</Label>
+              <Input
+                id="login-pass"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                dir="ltr"
+                className="text-left"
+                autoComplete="current-password"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleLogin();
+                }}
+              />
+            </div>
+            <Button
+              onClick={handleLogin}
+              disabled={signingIn || !email.trim() || !password}
+            >
+              {signingIn ? (
+                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
               ) : (
-                <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                <LogIn className="h-4 w-4 ml-1" />
               )}
-            </div>
-            <div className="flex items-center justify-between p-2 rounded-md bg-muted/50">
-              <span>احراز هویت</span>
-              {authStatus === "authenticated" ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              ) : authStatus === "loading" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <AlertCircle className="h-4 w-4 text-amber-600" />
-              )}
-            </div>
-            <div className="flex items-center justify-between p-2 rounded-md bg-muted/50">
-              <span>حالت داده</span>
-              <Badge variant={realMode ? "default" : "secondary"}>
-                {realMode ? "واقعی (Supabase)" : "موک"}
-              </Badge>
-            </div>
-          </div>
+              ورود
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-          {authStatus === "authenticated" && realMode && (
-            <div className="mt-4 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/20 text-sm">
-              <div className="font-medium text-emerald-800 dark:text-emerald-300 mb-1">
-                ✅ متصل و وارد شده
-              </div>
-              <p className="text-emerald-700/80 dark:text-emerald-400/80">
-                حالا تب «داشبورد» را بزن — داده واقعی از Supabase می‌آید.
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* خروج */}
+      {isLoggedIn && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <LogOut className="h-5 w-5" />
+              خروج
+            </CardTitle>
+            <CardDescription>
+              برای جابجایی بین حساب‌ها یا حفاظت امنیتی، از نشست خود خارج شوید.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={handleLogout}>
+              <LogOut className="h-4 w-4 ml-1" />
+              خروج از حساب
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

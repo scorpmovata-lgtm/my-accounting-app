@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Tags, Plus } from "lucide-react";
+import { Tags, Plus, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAccountingStore } from "@/store/accounting-store";
 import { toPersianDigits } from "@/lib/accounting/jalali";
+import { useToast } from "@/hooks/use-toast";
 
 export function CategoriesPanel() {
   const categories = useAccountingStore((s) => s.categories);
@@ -17,13 +18,40 @@ export function CategoriesPanel() {
   const deactivateCategory = useAccountingStore(
     (s) => s.deactivateCategory
   );
-  const [newName, setNewName] = useState("");
+  const { toast } = useToast();
 
-  function handleAdd() {
+  const [newName, setNewName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleAdd() {
     const name = newName.trim();
     if (!name) return;
-    addCategory(name);
-    setNewName("");
+    setSubmitting(true);
+    try {
+      const cat = await addCategory(name);
+      if (cat) {
+        toast({
+          title: "سرفصل اضافه شد",
+          description: `«${cat.name}» به فهرست سرفصل‌ها افزوده شد.`,
+        });
+        setNewName("");
+      } else {
+        toast({
+          title: "خطا در افزودن سرفصل",
+          description:
+            "امکان ثبت سرفصل نبود. در حالت واقعی اطمینان حاصل کنید به Supabase متصل هستید.",
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "خطا در افزودن سرفصل",
+        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function countForCategory(catId: string): number {
@@ -47,12 +75,20 @@ export function CategoriesPanel() {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="نام سرفصل جدید (مثلاً: اجاره)"
+            disabled={submitting}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleAdd();
+              if (e.key === "Enter" && !submitting) void handleAdd();
             }}
           />
-          <Button onClick={handleAdd} disabled={!newName.trim()}>
-            <Plus className="h-4 w-4" />
+          <Button
+            onClick={handleAdd}
+            disabled={!newName.trim() || submitting}
+          >
+            {submitting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
             افزودن
           </Button>
         </div>

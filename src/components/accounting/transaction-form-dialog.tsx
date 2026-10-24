@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Plus } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Plus, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAccountingStore } from "@/store/accounting-store";
+import { computeContactBalance } from "@/lib/accounting/engine";
 import { JalaliDatePicker } from "./jalali-date-picker";
 import {
   Currency,
@@ -32,15 +33,35 @@ import {
 import {
   formatAmount,
   fromPersianDigits,
+  toPersianDigits,
   todayISO,
 } from "@/lib/accounting/jalali";
 import { useToast } from "@/hooks/use-toast";
+
+// قالب‌بندی عدد با جداکننده هزارگان (ارقام فارسی)
+function formatWithSeparator(input: string): string {
+  // ابتدا کاراکترهای غیررقمی را حذف می‌کنیم
+  const digits = fromPersianDigits(input).replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  // جدا کردن از راست به چپ در گروه‌های ۳تایی
+  const withSep = digits.replace(/\B(?=(\d{3})+(?!\d))/g, "،");
+  return toPersianDigits(withSep);
+}
+
+// استخراج عدد از رشته قالب‌شده با جداکننده
+function parseAmount(input: string): number {
+  const digits = fromPersianDigits(input).replace(/[^0-9]/g, "");
+  if (!digits) return 0;
+  return parseInt(digits, 10);
+}
 
 export function TransactionFormDialog() {
   const [open, setOpen] = useState(false);
   const contacts = useAccountingStore((s) => s.contacts);
   const categories = useAccountingStore((s) => s.categories);
+  const transactions = useAccountingStore((s) => s.transactions);
   const addTransaction = useAccountingStore((s) => s.addTransaction);
+  const realMode = useAccountingStore((s) => s.realMode);
   const { toast } = useToast();
 
   const [contactId, setContactId] = useState("");
@@ -50,8 +71,45 @@ export function TransactionFormDialog() {
   const [currency, setCurrency] = useState<Currency>("IRT");
   const [date, setDate] = useState(todayISO());
   const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [overpayConfirmed, setOverpayConfirmed] = useState(false);
 
-  const selectedContact = contacts.find((c) => c.id === contactId);
+  // مانده فعلی مخاطب انتخاب‌شده
+  const contactBalance = useMemo(() => {
+    if (!contactId) return null;
+    return computeContactBalance(contactId, transactions);
+  }, [contactId, transactions]);
+
+  const amountNum = parseAmount(amountStr);
+
+  const isReceipt = type === "RECEIPT_ALLOCATION";
+  const isPayment = type === "PAYMENT_ALLOCATION";
+
+  // آیا این یک overpay است؟
+  const overpayInfo = useMemo(() => {
+    if (!contactBalance || amountNum <= 0) return null;
+    if (isReceipt && amountNum > contactBalance.outstandingReceivable) {
+      return {
+        type: "receipt" as const,
+        outstanding: contactBalance.outstandingReceivable,
+        excess: amountNum - contactBalance.outstandingReceivable,
+      };
+    }
+    if (isPayment && amountNum > contactBalance.outstandingPayable) {
+      return {
+        type: "payment" as const,
+        outstanding: contactBalance.outstandingPayable,
+        excess: amountNum - contactBalance.outstandingPayable,
+      };
+    }
+    return null;
+  }, [contactBalance, amountNum, isReceipt, isPayment]);
+
+  // وقتی مقدار amount یا نوع یا مخاطب تغییر می‌کند، تأیید overpay ریست می‌شود
+  // (useEffect ساده با setState)
+  function resetOverpayConfirmation() {
+    if (overpayConfirmed) setOverpayConfirmed(false);
+  }
 
   function reset() {
     setContactId("");
@@ -61,9 +119,10 @@ export function TransactionFormDialog() {
     setCurrency("IRT");
     setDate(todayISO());
     setDescription("");
+    setOverpayConfirmed(false);
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     if (!contactId) {
       toast({
         title: "خطا",
@@ -72,9 +131,7 @@ export function TransactionFormDialog() {
       });
       return;
     }
-    const amountLatin = fromPersianDigits(amountStr).replace(/[^0-9]/g, "");
-    const amount = parseInt(amountLatin, 10);
-    if (!amount || amount <= 0) {
+    if (!amountNum || amountNum <= 0) {
       toast({
         title: "خطا",
         description: "مبلغ معتبر وارد کنید (عدد مثبت).",
@@ -82,43 +139,69 @@ export function TransactionFormDialog() {
       });
       return;
     }
-
-    const result = addTransaction({
-      contactId,
-      categoryId: categoryId === "none" ? null : categoryId,
-      transactionType: type,
-      amount,
-      currency,
-      effectiveAt: date,
-      description: description.trim() || undefined,
-    });
-
-    if (result.ok) {
+    // اگر overpay است و تأیید نشده، جلوگیری کن
+    if (overpayInfo && !overpayConfirmed) {
       toast({
-        title: "تراکنش ثبت شد",
-        description: `${formatAmount(amount, currency)} برای ${
-          selectedContact?.displayName ?? ""
-        }`,
-      });
-      reset();
-      setOpen(false);
-    } else {
-      toast({
-        title: "خطا در ثبت تراکنش",
-        description: result.error,
+        title: "تأیید لازم",
+        description:
+          "مبلغ از مانده باز بیشتر است. روی «تأیید و ادامه» بزنید تا ادامه دهید.",
         variant: "destructive",
       });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await addTransaction({
+        contactId,
+        categoryId: categoryId === "none" ? null : categoryId,
+        transactionType: type,
+        amount: amountNum,
+        currency,
+        effectiveAt: date,
+        description: description.trim() || undefined,
+        allowOverpay: !!overpayInfo,
+      });
+      if (result.ok) {
+        const primary = result.transaction;
+        const secondary = result.secondaryTransaction;
+        if (secondary) {
+          // حالت split در mock
+          toast({
+            title: "تراکنش ثبت شد (شکسته)",
+            description: `دو تراکنش ثبت شد: ${formatAmount(
+              primary?.amount ?? 0,
+              currency
+            )} + ${formatAmount(secondary.amount, currency)}`,
+          });
+        } else {
+          toast({
+            title: "تراکنش ثبت شد",
+            description: `${formatAmount(amountNum, currency)} برای ${
+              contacts.find((c) => c.id === contactId)?.displayName ?? ""
+            }`,
+          });
+        }
+        reset();
+        setOpen(false);
+      } else {
+        toast({
+          title: "خطا در ثبت تراکنش",
+          description: result.error,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setSubmitting(false);
     }
   }
 
-  const amountPreview = (() => {
-    if (!amountStr) return null;
-    const n = parseInt(
-      fromPersianDigits(amountStr).replace(/[^0-9]/g, ""),
-      10
-    );
-    return n > 0 ? formatAmount(n, currency) : null;
-  })();
+  const selectedContact = contacts.find((c) => c.id === contactId);
+
+  const submitDisabled =
+    submitting ||
+    !contactId ||
+    !amountNum ||
+    (!!overpayInfo && !overpayConfirmed);
 
   return (
     <Dialog
@@ -149,7 +232,10 @@ export function TransactionFormDialog() {
             <Label>نوع عملیات</Label>
             <Select
               value={type}
-              onValueChange={(v) => setType(v as TransactionType)}
+              onValueChange={(v) => {
+                setType(v as TransactionType);
+                resetOverpayConfirmation();
+              }}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -172,7 +258,13 @@ export function TransactionFormDialog() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label>طرف حساب</Label>
-              <Select value={contactId} onValueChange={setContactId}>
+              <Select
+                value={contactId}
+                onValueChange={(v) => {
+                  setContactId(v);
+                  resetOverpayConfirmation();
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="انتخاب کنید" />
                 </SelectTrigger>
@@ -205,21 +297,41 @@ export function TransactionFormDialog() {
             </div>
           </div>
 
+          {/* کارت مانده فعلی مخاطب */}
+          {selectedContact && contactBalance && (
+            <div className="rounded-md border p-3 bg-muted/30 text-sm">
+              <div className="font-medium mb-1.5">
+                مانده فعلی {selectedContact.displayName}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <span className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  طلب باز: {formatAmount(contactBalance.outstandingReceivable)}
+                </span>
+                <span className="px-2 py-1 rounded-md bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  بدهی باز: {formatAmount(contactBalance.outstandingPayable)}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* مبلغ و واحد */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label>مبلغ</Label>
               <Input
                 value={amountStr}
-                onChange={(e) => setAmountStr(e.target.value)}
+                onChange={(e) => {
+                  setAmountStr(formatWithSeparator(e.target.value));
+                  resetOverpayConfirmation();
+                }}
                 inputMode="numeric"
-                placeholder="مثلاً ۵۰۰۰۰۰ یا 500000"
+                placeholder="مثلاً ۵۰۰٬۰۰۰"
                 dir="ltr"
-                className="text-right"
+                className="text-right font-mono"
               />
-              {amountPreview && (
+              {amountNum > 0 && (
                 <span className="text-xs text-muted-foreground">
-                  معادل: {amountPreview}
+                  معادل: {formatAmount(amountNum, currency)}
                 </span>
               )}
             </div>
@@ -240,6 +352,72 @@ export function TransactionFormDialog() {
             </div>
           </div>
 
+          {/* هشدار overpay */}
+          {overpayInfo && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 p-3 space-y-2">
+              <div className="text-sm text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <div>
+                  {overpayInfo.type === "receipt" ? (
+                    <div>
+                      مبلغ دریافت ({formatAmount(amountNum, currency)}) از طلب
+                      باز ({formatAmount(overpayInfo.outstanding, currency)})
+                      بیشتر است.
+                      {realMode ? (
+                        <div className="mt-1 text-xs">
+                          در حالت واقعی، Edge Function این عملیات را رد
+                          می‌کند. ابتدا طلب را افزایش دهید یا مبلغ را کاهش دهید.
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-xs">
+                          در حالت موک، با تأیید شما این عملیات به دو تراکنش
+                          شکسته می‌شود: دریافت{" "}
+                          {formatAmount(overpayInfo.outstanding, currency)} +{" "}
+                          ایجاد بدهی {formatAmount(overpayInfo.excess, currency)}.
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      مبلغ پرداخت ({formatAmount(amountNum, currency)}) از بدهی
+                      باز ({formatAmount(overpayInfo.outstanding, currency)})
+                      بیشتر است.
+                      {realMode ? (
+                        <div className="mt-1 text-xs">
+                          در حالت واقعی، Edge Function این عملیات را رد
+                          می‌کند. ابتدا بدهی را افزایش دهید یا مبلغ را کاهش دهید.
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-xs">
+                          در حالت موک، با تأیید شما این عملیات به دو تراکنش
+                          شکسته می‌شود: پرداخت{" "}
+                          {formatAmount(overpayInfo.outstanding, currency)} +{" "}
+                          ایجاد طلب {formatAmount(overpayInfo.excess, currency)}.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {!overpayConfirmed && !realMode && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-amber-300 text-amber-800 hover:bg-amber-100"
+                  onClick={() => setOverpayConfirmed(true)}
+                >
+                  <AlertTriangle className="h-4 w-4 ml-1" />
+                  تأیید و ادامه
+                </Button>
+              )}
+              {overpayConfirmed && !realMode && (
+                <div className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                  ✓ تأیید شد. اکنون می‌توانید تراکنش را ثبت کنید.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* تاریخ */}
           <div className="grid gap-2">
             <Label>تاریخ مؤثر</Label>
@@ -259,10 +437,21 @@ export function TransactionFormDialog() {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(false)}
+            disabled={submitting}
+          >
             انصراف
           </Button>
-          <Button onClick={handleSubmit}>ثبت تراکنش</Button>
+          <Button onClick={handleSubmit} disabled={submitDisabled}>
+            {submitting ? (
+              <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4 ml-1" />
+            )}
+            ثبت تراکنش
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
