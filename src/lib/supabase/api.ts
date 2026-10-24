@@ -668,6 +668,44 @@ export async function adminDeleteUser(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * به‌روزرسانی display_name یک کاربر از طریق Edge Function admin-users (PUT).
+ * فقط admin (صاحب دفتر) مجاز است.
+ */
+export async function adminUpdateUser(
+  userId: string,
+  displayName: string
+): Promise<{ ok: boolean; error?: string }> {
+  const base = getFunctionsBase();
+  const token = await getAccessToken();
+  if (!base || !token) {
+    return { ok: false, error: "ابتدا وارد شوید." };
+  }
+  try {
+    const res = await fetch(
+      `${base}/functions/v1/admin-users?id=${encodeURIComponent(userId)}`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ display_name: displayName }),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error ?? "خطا در به‌روزرسانی کاربر" };
+    }
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "خطای شبکه",
+    };
+  }
+}
+
 export interface BackupData {
   version: string;
   created_at: string;

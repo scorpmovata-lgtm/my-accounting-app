@@ -1,0 +1,762 @@
+     1→// اسناد و کد آماده‌ی دیپلوی برای فاز ۲
+     2→// این فایل محتوای SQL، Edge Function و ربات تلگرام را به‌صورت رشته نگه می‌دارد
+     3→// تا در تب «راه‌اندازی» نمایش داده و قابل کپی باشد.
+     4→
+     5→export interface DeploymentStep {
+     6→  title: string;
+     7→  detail: string;
+     8→  command?: string;
+     9→}
+    10→
+    11→export const DEPLOYMENT_STEPS: DeploymentStep[] = [
+    12→  {
+    13→    title: "ایجاد پروژه Supabase",
+    14→    detail:
+    15→      "وارد supabase.com شو → New Project. نام: my-accounting، منطقه: Frankfurt. رمز دیتابیس را در .env ذخیره کن.",
+    16→  },
+    17→  {
+    18→    title: "اجرای SQL Schema",
+    19→    detail:
+    20→      "در داشبورد Supabase → SQL Editor → New query. محتوای فایل «۱. SQL Schema» را paste کن و Run بزن. این کار همه جداول، RLS policies و triggers را می‌سازد.",
+    21→  },
+    22→  {
+    23→    title: "نصب Supabase CLI",
+    24→    detail: "در ترمینال VS Code بنویس:",
+    25→    command: "npm install -g supabase",
+    26→  },
+    27→  {
+    28→    title: "ورود به Supabase CLI",
+    29→    detail: "با دستور زیر لاگین کن (مرورگر باز می‌شود):",
+    30→    command: "supabase login",
+    31→  },
+    32→  {
+    33→    title: "اتصال به پروژه",
+    34→    detail:
+    35→      "Project Ref ID را از Settings → API کپی کن. در پوشه پروژه این را اجرا کن:",
+    36→    command: "supabase link --project-ref <PROJECT_REF_ID>",
+    37→  },
+    38→  {
+    39→    title: "تنظیم اسرار Edge Function",
+    40→    detail: "این سه secret را تنظیم کن (با کلیدهای واقعی از Settings → API):",
+    41→    command:
+    42→      "supabase secrets set SUPABASE_URL=https://<project>.supabase.co\nsupabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service_role_key>\nsupabase secrets set TELEGRAM_BOT_TOKEN=<bot_token>",
+    43→  },
+    44→  {
+    45→    title: "دیپلوی Edge Function ثبت تراکنش",
+    46→    detail: "فایل‌های functions را در supabase/functions بگذار و سپس دیپلوی کن:",
+    47→    command: "supabase functions deploy create-transaction --no-verify-jwt",
+    48→  },
+    49→  {
+    50→    title: "دیپلوی ربات تلگرام",
+    51→    detail: "همان Edge Function بات را هم دیپلوی کن:",
+    52→    command: "supabase functions deploy telegram-bot --no-verify-jwt",
+    53→  },
+    54→  {
+    55→    title: "تنظیم Webhook تلگرام",
+    56→    detail:
+    57→      "به تلگرام بگو آپدیت‌ها را به Edge Function بات بفرست. این URL را در BotFather یا با curl اجرا کن:",
+    58→    command:
+    59→      'curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<project>.supabase.co/functions/v1/telegram-bot"',
+    60→  },
+    61→  {
+    62→    title: "تست ربات",
+    63→    detail:
+    64→      "در تلگرام ربات را باز کن، /start بزن. سپس از اپ، یک کد ۶ رقمی برای یک مخاطب تولید کن و در ربات با /link <code> آن را وارد کن.",
+    65→  },
+    66→];
+    67→
+    68→export const SCHEMA_SQL = `-- ============================================================
+    69→-- دفتر حسابداری — Schema نسخه ۰.۱
+    70→-- اجرا در: Supabase Dashboard → SQL Editor → New query → Run
+    71→-- ============================================================
+    72→
+    73→-- ۱. profiles — اطلاعات کاربر (expand auth.users)
+    74→create table if not exists public.profiles (
+    75→  id uuid primary key references auth.users(id) on delete cascade,
+    76→  display_name text not null,
+    77→  default_currency text not null default 'IRT' check (default_currency in ('IRT','IRR')),
+    78→  created_at timestamptz not null default now(),
+    79→  updated_at timestamptz not null default now()
+    80→);
+    81→alter table public.profiles enable row level security;
+    82→create policy "profiles_select_own" on public.profiles
+    83→  for select using (auth.uid() = id);
+    84→create policy "profiles_insert_own" on public.profiles
+    85→  for insert with check (auth.uid() = id);
+    86→create policy "profiles_update_own" on public.profiles
+    87→  for update using (auth.uid() = id);
+    88→
+    89→-- ۲. ledgers — دفتر شخصی
+    90→create table if not exists public.ledgers (
+    91→  id uuid primary key default gen_random_uuid(),
+    92→  owner_user_id uuid not null references auth.users(id) on delete cascade,
+    93→  name text not null,
+    94→  default_currency text not null default 'IRT' check (default_currency in ('IRT','IRR')),
+    95→  created_at timestamptz not null default now(),
+    96→  archived_at timestamptz
+    97→);
+    98→alter table public.ledgers enable row level security;
+    99→create policy "ledgers_owner_all" on public.ledgers
+   100→  for all using (auth.uid() = owner_user_id)
+   101→  with check (auth.uid() = owner_user_id);
+   102→
+   103→-- ۳. contacts — طرف حساب
+   104→create table if not exists public.contacts (
+   105→  id uuid primary key default gen_random_uuid(),
+   106→  ledger_id uuid not null references public.ledgers(id) on delete cascade,
+   107→  display_name text not null,
+   108→  notes text,
+   109→  linked_telegram_id bigint,
+   110→  linked_profile_id uuid references public.profiles(id),
+   111→  created_at timestamptz not null default now(),
+   112→  archived_at timestamptz
+   113→);
+   114→alter table public.contacts enable row level security;
+   115→create policy "contacts_select_own" on public.contacts for select using (
+   116→  exists (select 1 from public.ledgers l where l.id = contacts.ledger_id and l.owner_user_id = auth.uid())
+   117→);
+   118→create policy "contacts_insert_own" on public.contacts for insert with check (
+   119→  exists (select 1 from public.ledgers l where l.id = contacts.ledger_id and l.owner_user_id = auth.uid())
+   120→);
+   121→create policy "contacts_update_own" on public.contacts for update using (
+   122→  exists (select 1 from public.ledgers l where l.id = contacts.ledger_id and l.owner_user_id = auth.uid())
+   123→);
+   124→create policy "contacts_delete_own" on public.contacts for delete using (
+   125→  exists (select 1 from public.ledgers l where l.id = contacts.ledger_id and l.owner_user_id = auth.uid())
+   126→);
+   127→
+   128→-- ۴. categories — سرفصل
+   129→create table if not exists public.categories (
+   130→  id uuid primary key default gen_random_uuid(),
+   131→  ledger_id uuid not null references public.ledgers(id) on delete cascade,
+   132→  name text not null,
+   133→  is_active boolean not null default true,
+   134→  sort_order integer not null default 0,
+   135→  created_at timestamptz not null default now(),
+   136→  archived_at timestamptz
+   137→);
+   138→alter table public.categories enable row level security;
+   139→create policy "categories_select_own" on public.categories for select using (
+   140→  exists (select 1 from public.ledgers l where l.id = categories.ledger_id and l.owner_user_id = auth.uid())
+   141→);
+   142→create policy "categories_insert_own" on public.categories for insert with check (
+   143→  exists (select 1 from public.ledgers l where l.id = categories.ledger_id and l.owner_user_id = auth.uid())
+   144→);
+   145→create policy "categories_update_own" on public.categories for update using (
+   146→  exists (select 1 from public.ledgers l where l.id = categories.ledger_id and l.owner_user_id = auth.uid())
+   147→);
+   148→create policy "categories_delete_own" on public.categories for delete using (
+   149→  exists (select 1 from public.ledgers l where l.id = categories.ledger_id and l.owner_user_id = auth.uid())
+   150→);
+   151→
+   152→-- ۵. transactions — تراکنش مالی (حساس)
+   153→create type transaction_type as enum (
+   154→  'OPENING_RECEIVABLE','OPENING_PAYABLE',
+   155→  'RECEIVABLE_CHARGE','PAYABLE_CHARGE',
+   156→  'RECEIPT_ALLOCATION','PAYMENT_ALLOCATION'
+   157→);
+   158→create type transaction_status as enum ('POSTED','REVERSED');
+   159→
+   160→create table if not exists public.transactions (
+   161→  id uuid primary key default gen_random_uuid(),
+   162→  ledger_id uuid not null references public.ledgers(id) on delete cascade,
+   163→  contact_id uuid not null references public.contacts(id) on delete restrict,
+   164→  category_id uuid references public.categories(id),
+   165→  transaction_type transaction_type not null,
+   166→  amount bigint not null check (amount > 0),
+   167→  currency text not null check (currency in ('IRT','IRR')),
+   168→  effective_at date not null,
+   169→  created_at timestamptz not null default now(),
+   170→  created_by uuid not null references auth.users(id),
+   171→  description text,
+   172→  status transaction_status not null default 'POSTED',
+   173→  reverses_transaction_id uuid references public.transactions(id),
+   174→  idempotency_key text not null,
+   175→  unique (ledger_id, idempotency_key)
+   176→);
+   177→alter table public.transactions enable row level security;
+   178→-- کاربر می‌تواند فقط SELECT تراکنش‌های دفتر خودش را ببیند
+   179→create policy "transactions_select_own" on public.transactions for select using (
+   180→  exists (select 1 from public.ledgers l where l.id = transactions.ledger_id and l.owner_user_id = auth.uid())
+   181→);
+   182→-- توجه: INSERT/UPDATE/DELETE غیرممکن است برای کاربران عادی.
+   183→-- این عملیات‌ها فقط از طریق Edge Function با service_role (که RLS را دور می‌زند) انجام می‌شود.
+   184→
+   185→-- ۶. audit_logs — گزارش ممیزی
+   186→create table if not exists public.audit_logs (
+   187→  id uuid primary key default gen_random_uuid(),
+   188→  actor_id uuid references auth.users(id),
+   189→  action text not null,
+   190→  entity_type text not null,
+   191→  entity_id text not null,
+   192→  result text not null check (result in ('success','failure')),
+   193→  details text,
+   194→  created_at timestamptz not null default now()
+   195→);
+   196→alter table public.audit_logs enable row level security;
+   197→create policy "audit_logs_select_own" on public.audit_logs
+   198→  for select using (actor_id = auth.uid());
+   199→
+   200→-- ۷. telegram_links — اتصال تلگرام
+   201→create table if not exists public.telegram_links (
+   202→  id uuid primary key default gen_random_uuid(),
+   203→  contact_id uuid not null references public.contacts(id) on delete cascade,
+   204→  ledger_id uuid not null references public.ledgers(id) on delete cascade,
+   205→  telegram_user_id bigint,
+   206→  telegram_username text,
+   207→  status text not null default 'pending' check (status in ('pending','linked','revoked')),
+   208→  scope text not null default 'balance_only'
+   209→    check (scope in ('balance_only','transaction_list','transaction_details','category_breakdown')),
+   210→  linked_at timestamptz,
+   211→  revoked_at timestamptz,
+   212→  created_at timestamptz not null default now()
+   213→);
+   214→alter table public.telegram_links enable row level security;
+   215→create policy "telegram_links_owner_all" on public.telegram_links
+   216→  for all using (
+   217→    exists (select 1 from public.ledgers l where l.id = telegram_links.ledger_id and l.owner_user_id = auth.uid())
+   218→  ) with check (
+   219→    exists (select 1 from public.ledgers l where l.id = telegram_links.ledger_id and l.owner_user_id = auth.uid())
+   220→  );
+   221→
+   222→-- ۸. link_codes — کد یک‌بارمصرف اتصال
+   223→create table if not exists public.link_codes (
+   224→  code text primary key,
+   225→  contact_id uuid not null references public.contacts(id) on delete cascade,
+   226→  ledger_id uuid not null references public.ledgers(id) on delete cascade,
+   227→  scope text not null default 'balance_only',
+   228→  expires_at timestamptz not null,
+   229→  used boolean not null default false,
+   230→  used_at timestamptz,
+   231→  created_at timestamptz not null default now()
+   232→);
+   233→alter table public.link_codes enable row level security;
+   234→create policy "link_codes_owner_all" on public.link_codes
+   235→  for all using (
+   236→    exists (select 1 from public.ledgers l where l.id = link_codes.ledger_id and l.owner_user_id = auth.uid())
+   237→  ) with check (
+   238→    exists (select 1 from public.ledgers l where l.id = link_codes.ledger_id and l.owner_user_id = auth.uid())
+   239→  );
+   240→
+   241→-- ۹. ایندکس‌ها
+   242→create index if not exists idx_ledgers_owner on public.ledgers(owner_user_id);
+   243→create index if not exists idx_contacts_ledger on public.contacts(ledger_id);
+   244→create index if not exists idx_categories_ledger on public.categories(ledger_id);
+   245→create index if not exists idx_transactions_ledger on public.transactions(ledger_id);
+   246→create index if not exists idx_transactions_contact on public.transactions(contact_id);
+   247→create index if not exists idx_transactions_effective on public.transactions(effective_at desc);
+   248→create index if not exists idx_audit_logs_actor on public.audit_logs(actor_id, created_at desc);
+   249→create index if not exists idx_telegram_links_contact on public.telegram_links(contact_id);
+   250→
+   251→-- ۱۰. Trigger: ساخت خودکار profile + ledger هنگام ثبت‌نام
+   252→create or replace function public.handle_new_user()
+   253→returns trigger
+   254→language plpgsql
+   255→security definer set search_path = public
+   256→as $$
+   257→begin
+   258→  insert into public.profiles (id, display_name)
+   259→  values (new.id, coalesce(new.raw_user_meta_data->>'display_name', 'کاربر جدید'))
+   260→  on conflict (id) do nothing;
+   261→
+   262→  insert into public.ledgers (owner_user_id, name)
+   263→  values (new.id, 'دفتر شخصی من')
+   264→  on conflict do nothing;
+   265→
+   266→  return new;
+   267→end;
+   268→$$;
+   269→drop trigger if exists on_auth_user_created on auth.users;
+   270→create trigger on_auth_user_created
+   271→  after insert on auth.users
+   272→  for each row execute function public.handle_new_user();
+   273→
+   274→-- ۱۱. Trigger: به‌روزرسانی updated_at برای profiles
+   275→create or replace function public.set_updated_at()
+   276→returns trigger
+   277→language plpgsql
+   278→as $$
+   279→begin
+   280→  new.updated_at = now();
+   281→  return new;
+   282→end;
+   283→$$;
+   284→drop trigger if exists profiles_set_updated_at on public.profiles;
+   285→create trigger profiles_set_updated_at
+   286→  before update on public.profiles
+   287→  for each row execute function public.set_updated_at();
+   288→
+   289→-- پایان Schema
+   290→`;
+   291→
+   292→export const CREATE_TRANSACTION_FN = `// ============================================================
+   293→// Edge Function: create-transaction
+   294→// مسیر فایل در پروژه: supabase/functions/create-transaction/index.ts
+   295→// دیپلوی: supabase functions deploy create-transaction --no-verify-jwt
+   296→// ============================================================
+   297→// این تابع تراکنش مالی را با اعتبارسنجی اتمیک ثبت می‌کند.
+   298→// کاربران مستقیماً به جدول transactions INSERT نمی‌کنند — همگی از این تابع می‌گذرند.
+   299→
+   300→import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+   301→
+   302→const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+   303→const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+   304→
+   305→const TRANSACTION_EFFECT: Record<string, { receivable: number; payable: number }> = {
+   306→  OPENING_RECEIVABLE: { receivable: 1, payable: 0 },
+   307→  OPENING_PAYABLE: { receivable: 0, payable: 1 },
+   308→  RECEIVABLE_CHARGE: { receivable: 1, payable: 0 },
+   309→  PAYABLE_CHARGE: { receivable: 0, payable: 1 },
+   310→  RECEIPT_ALLOCATION: { receivable: -1, payable: 0 },
+   311→  PAYMENT_ALLOCATION: { receivable: 0, payable: -1 },
+   312→};
+   313→
+   314→const corsHeaders = {
+   315→  "Access-Control-Allow-Origin": "*",
+   316→  "Access-Control-Allow-Headers":
+   317→    "authorization, x-client-info, apikey, content-type",
+   318→};
+   319→
+   320→function json(data: unknown, status = 200) {
+   321→  return new Response(JSON.stringify(data), {
+   322→    status,
+   323→    headers: { ...corsHeaders, "Content-Type": "application/json" },
+   324→  });
+   325→}
+   326→
+   327→// استخراج شناسه کاربر از JWT
+   328→// (Supabase هنگام درخواست از سمت کلاینت با verify_jwt=true خودکار تأیید می‌کند،
+   329→//  ولی چون این تابع را با --no-verify-jwt دیپلوی می‌کنیم، خودمان payload را استخراج می‌کنیم)
+   330→function extractUser(jwt: string): { sub: string } | null {
+   331→  try {
+   332→    const parts = jwt.split(".");
+   333→    if (parts.length !== 3) return null;
+   334→    const payload = JSON.parse(atob(parts[1]));
+   335→    if (!payload.sub) return null;
+   336→    if (payload.exp && payload.exp < Date.now() / 1000) return null;
+   337→    return { sub: payload.sub };
+   338→  } catch {
+   339→    return null;
+   340→  }
+   341→}
+   342→
+   343→async function computeOutstanding(
+   344→  supabase: ReturnType<typeof createClient>,
+   345→  contactId: string,
+   346→  currency: string
+   347→): Promise<{ receivable: number; payable: number }> {
+   348→  const { data, error } = await supabase
+   349→    .from("transactions")
+   350→    .select("transaction_type, amount")
+   351→    .eq("contact_id", contactId)
+   352→    .eq("status", "POSTED")
+   353→    .eq("currency", currency);
+   354→
+   355→  if (error) throw error;
+   356→
+   357→  let receivable = 0;
+   358→  let payable = 0;
+   359→  for (const t of data ?? []) {
+   360→    const effect = TRANSACTION_EFFECT[t.transaction_type];
+   361→    if (!effect) continue;
+   362→    receivable += effect.receivable * t.amount;
+   363→    payable += effect.payable * t.amount;
+   364→  }
+   365→  return { receivable, payable };
+   366→}
+   367→
+   368→async function logAudit(
+   369→  supabase: ReturnType<typeof createClient>,
+   370→  userId: string,
+   371→  result: "success" | "failure",
+   372→  details: string,
+   373→  entityId: string
+   374→) {
+   375→  await supabase.from("audit_logs").insert({
+   376→    actor_id: userId,
+   377→    action: "CREATE_TXN",
+   378→    entity_type: "Transaction",
+   379→    entity_id: entityId,
+   380→    result,
+   381→    details,
+   382→  });
+   383→}
+   384→
+   385→Deno.serve(async (req: Request) => {
+   386→  if (req.method === "OPTIONS") {
+   387→    return new Response("ok", { headers: corsHeaders });
+   388→  }
+   389→  if (req.method !== "POST") {
+   390→    return json({ error: "Method not allowed" }, 405);
+   391→  }
+   392→
+   393→  const authHeader = req.headers.get("Authorization");
+   394→  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+   395→    return json({ error: "Unauthorized" }, 401);
+   396→  }
+   397→  const jwt = authHeader.replace("Bearer ", "");
+   398→  const user = extractUser(jwt);
+   399→  if (!user) {
+   400→    return json({ error: "Invalid token" }, 401);
+   401→  }
+   402→
+   403→  let input: {
+   404→    contactId: string;
+   405→    categoryId?: string | null;
+   406→    transactionType: keyof typeof TRANSACTION_EFFECT;
+   407→    amount: number;
+   408→    currency: "IRT" | "IRR";
+   409→    effectiveAt: string;
+   410→    description?: string;
+   411→    idempotencyKey: string;
+   412→  };
+   413→  try {
+   414→    input = await req.json();
+   415→  } catch {
+   416→    return json({ error: "Invalid JSON" }, 400);
+   417→  }
+   418→
+   419→  if (
+   420→    !input.contactId ||
+   421→    !input.transactionType ||
+   422→    !input.amount ||
+   423→    !input.currency ||
+   424→    !input.effectiveAt ||
+   425→    !input.idempotencyKey
+   426→  ) {
+   427→    return json({ error: "Missing required fields" }, 400);
+   428→  }
+   429→  if (input.amount <= 0) {
+   430→    return json({ error: "Amount must be positive" }, 400);
+   431→  }
+   432→  if (!TRANSACTION_EFFECT[input.transactionType]) {
+   433→    return json({ error: "Invalid transaction type" }, 400);
+   434→  }
+   435→
+   436→  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+   437→
+   438→  // ۱. تأیید مالکیت: کاربر مالک دفتر این مخاطب است
+   439→  const { data: contact } = await supabase
+   440→    .from("contacts")
+   441→    .select("id, ledger_id, display_name, ledgers(id, owner_user_id)")
+   442→    .eq("id", input.contactId)
+   443→    .single();
+   444→
+   445→  if (!contact) {
+   446→    await logAudit(supabase, user.sub, "failure", "Contact not found", "-");
+   447→    return json({ error: "Contact not found" }, 404);
+   448→  }
+   449→  const ledger = (contact.ledgers as Array<{ id: string; owner_user_id: string }>)[0];
+   450→  if (!ledger || ledger.owner_user_id !== user.sub) {
+   451→    await logAudit(supabase, user.sub, "failure", "Not authorized", "-");
+   452→    return json({ error: "Not authorized" }, 403);
+   453→  }
+   454→
+   455→  // ۲. Idempotency: اگر همین تراکنش قبلاً ثبت شده، همان را برگردان
+   456→  const { data: existing } = await supabase
+   457→    .from("transactions")
+   458→    .select("*")
+   459→    .eq("ledger_id", ledger.id)
+   460→    .eq("idempotency_key", input.idempotencyKey)
+   461→    .maybeSingle();
+   462→  if (existing) {
+   463→    return json({ ok: true, transaction: existing, idempotent: true });
+   464→  }
+   465→
+   466→  // ۳. اعتبارسنجی مالی: دریافت نباید از طلب باز بیشتر باشد
+   467→  if (
+   468→    input.transactionType === "RECEIPT_ALLOCATION" ||
+   469→    input.transactionType === "PAYMENT_ALLOCATION"
+   470→  ) {
+   471→    const balance = await computeOutstanding(supabase, input.contactId, input.currency);
+   472→    if (input.transactionType === "RECEIPT_ALLOCATION" && input.amount > balance.receivable) {
+   473→      const msg =
+   474→        "Receipt " + input.amount + " exceeds outstanding receivable " + balance.receivable;
+   475→      await logAudit(supabase, user.sub, "failure", msg, "-");
+   476→      return json({ error: msg }, 400);
+   477→    }
+   478→    if (input.transactionType === "PAYMENT_ALLOCATION" && input.amount > balance.payable) {
+   479→      const msg =
+   480→        "Payment " + input.amount + " exceeds outstanding payable " + balance.payable;
+   481→      await logAudit(supabase, user.sub, "failure", msg, "-");
+   482→      return json({ error: msg }, 400);
+   483→    }
+   484→  }
+   485→
+   486→  // ۴. ثبت تراکنش
+   487→  const { data: txn, error: insertErr } = await supabase
+   488→    .from("transactions")
+   489→    .insert({
+   490→      ledger_id: ledger.id,
+   491→      contact_id: input.contactId,
+   492→      category_id: input.categoryId ?? null,
+   493→      transaction_type: input.transactionType,
+   494→      amount: input.amount,
+   495→      currency: input.currency,
+   496→      effective_at: input.effectiveAt,
+   497→      created_by: user.sub,
+   498→      description: input.description ?? null,
+   499→      status: "POSTED",
+   500→      idempotency_key: input.idempotencyKey,
+   501→    })
+   502→    .select()
+   503→    .single();
+   504→
+   505→  if (insertErr || !txn) {
+   506→    const msg = "Insert failed: " + (insertErr?.message ?? "unknown");
+   507→    await logAudit(supabase, user.sub, "failure", msg, "-");
+   508→    return json({ error: msg }, 500);
+   509→  }
+   510→
+   511→  // ۵. ممیزی
+   512→  await logAudit(
+   513→    supabase,
+   514→    user.sub,
+   515→    "success",
+   516→    "Created " + input.transactionType + " " + input.amount + " " + input.currency +
+   517→      " for " + contact.display_name,
+   518→    txn.id
+   519→  );
+   520→
+   521→  return json({ ok: true, transaction: txn });
+   522→});
+   523→`;
+   524→
+   525→export const TELEGRAM_BOT_FN = `// ============================================================
+   526→// Edge Function: telegram-bot
+   527→// مسیر فایل: supabase/functions/telegram-bot/index.ts
+   528→// دیپلوی: supabase functions deploy telegram-bot --no-verify-jwt
+   529→// تنظیم webhook:
+   530→//   curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<project>.supabase.co/functions/v1/telegram-bot"
+   531→// ============================================================
+   532→
+   533→import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+   534→
+   535→const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+   536→const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+   537→const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
+   538→const TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN;
+   539→
+   540→const corsHeaders = {
+   541→  "Access-Control-Allow-Origin": "*",
+   542→  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+   543→};
+   544→
+   545→function json(data: unknown, status = 200) {
+   546→  return new Response(JSON.stringify(data), {
+   547→    status,
+   548→    headers: { ...corsHeaders, "Content-Type": "application/json" },
+   549→  });
+   550→}
+   551→
+   552→async function tg(chatId: number, text: string, replyMarkup?: unknown) {
+   553→  const body: Record<string, unknown> = {
+   554→    chat_id: chatId,
+   555→    text,
+   556→    parse_mode: "HTML",
+   557→  };
+   558→  if (replyMarkup) body.reply_markup = replyMarkup;
+   559→  await fetch(TELEGRAM_API + "/sendMessage", {
+   560→    method: "POST",
+   561→    headers: { "Content-Type": "application/json" },
+   562→    body: JSON.stringify(body),
+   563→  });
+   564→}
+   565→
+   566→function scopeLabel(scope: string): string {
+   567→  switch (scope) {
+   568→    case "balance_only": return "فقط مانده";
+   569→    case "transaction_list": return "فهرست تراکنش‌ها";
+   570→    case "transaction_details": return "جزئیات تراکنش‌ها";
+   571→    case "category_breakdown": return "گزارش سرفصلی";
+   572→    default: return scope;
+   573→  }
+   574→}
+   575→
+   576→function fmt(n: number): string {
+   577→  return n.toLocaleString("en-US");
+   578→}
+   579→
+   580→function computeBalance(txns: Array<{ transaction_type: string; amount: number }>) {
+   581→  let receivable = 0;
+   582→  let payable = 0;
+   583→  for (const t of txns) {
+   584→    if (t.transaction_type === "RECEIVABLE_CHARGE" || t.transaction_type === "OPENING_RECEIVABLE") {
+   585→      receivable += t.amount;
+   586→    } else if (t.transaction_type === "PAYABLE_CHARGE" || t.transaction_type === "OPENING_PAYABLE") {
+   587→      payable += t.amount;
+   588→    } else if (t.transaction_type === "RECEIPT_ALLOCATION") {
+   589→      receivable -= t.amount;
+   590→    } else if (t.transaction_type === "PAYMENT_ALLOCATION") {
+   591→      payable -= t.amount;
+   592→    }
+   593→  }
+   594→  return { receivable, payable };
+   595→}
+   596→
+   597→Deno.serve(async (req: Request) => {
+   598→  if (req.method === "OPTIONS") {
+   599→    return new Response("ok", { headers: corsHeaders });
+   600→  }
+   601→  if (req.method !== "POST") {
+   602→    return json({ error: "Method not allowed" }, 405);
+   603→  }
+   604→
+   605→  let update: {
+   606→    message?: {
+   607→      chat?: { id: number };
+   608→      text?: string;
+   609→      from?: { id: number; username?: string };
+   610→    };
+   611→  };
+   612→  try {
+   613→    update = await req.json();
+   614→  } catch {
+   615→    return json({ error: "Invalid JSON" }, 400);
+   616→  }
+   617→
+   618→  const message = update.message;
+   619→  if (!message || !message.chat || !message.from) return json({ ok: true });
+   620→  const chatId = message.chat.id;
+   621→  const text = (message.text ?? "").trim();
+   622→  const telegramUserId = message.from.id;
+   623→  const telegramUsername = message.from.username;
+   624→
+   625→  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+   626→
+   627→  try {
+   628→    if (text === "/start") {
+   629→      await tg(
+   630→        chatId,
+   631→        "👋 سلام!\\n\\n" +
+   632→          "این ربات برای مشاهده مانده بدهی و طلب شماست.\\n" +
+   633→          "برای اتصال، کد ۶ رقمی که از صاحب دفتر گرفته‌اید را بفرستید:\\n" +
+   634→          "<code>/link 123456</code>\\n\\n" +
+   635→          "بعد از اتصال: <code>/balance</code> برای مشاهده مانده."
+   636→      );
+   637→      return json({ ok: true });
+   638→    }
+   639→
+   640→    if (text.startsWith("/link ")) {
+   641→      const code = text.replace("/link ", "").trim();
+   642→      if (!/^\\d{6}$/.test(code)) {
+   643→        await tg(chatId, "❌ کد باید ۶ رقم باشد. مثال: <code>/link 123456</code>");
+   644→        return json({ ok: true });
+   645→      }
+   646→      const { data: linkCode } = await supabase
+   647→        .from("link_codes")
+   648→        .select("*")
+   649→        .eq("code", code)
+   650→        .eq("used", false)
+   651→        .gt("expires_at", new Date().toISOString())
+   652→        .maybeSingle();
+   653→      if (!linkCode) {
+   654→        await tg(chatId, "❌ کد نامعتبر، منقضی یا قبلاً استفاده شده است.");
+   655→        return json({ ok: true });
+   656→      }
+   657→      const { data: contact } = await supabase
+   658→        .from("contacts")
+   659→        .select("id, display_name, ledger_id")
+   660→        .eq("id", linkCode.contact_id)
+   661→        .single();
+   662→      if (!contact) {
+   663→        await tg(chatId, "❌ مخاطب مرتبط پیدا نشد.");
+   664→        return json({ ok: true });
+   665→      }
+   666→      // علامت‌گذاری کد به‌عنوان استفاده‌شده
+   667→      await supabase
+   668→        .from("link_codes")
+   669→        .update({ used: true, used_at: new Date().toISOString() })
+   670→        .eq("code", code);
+   671→      // درج رابطه تلگرام
+   672→      await supabase.from("telegram_links").insert({
+   673→        contact_id: contact.id,
+   674→        ledger_id: contact.ledger_id,
+   675→        telegram_user_id: telegramUserId,
+   676→        telegram_username: telegramUsername ? "@" + telegramUsername : null,
+   677→        status: "linked",
+   678→        scope: linkCode.scope,
+   679→        linked_at: new Date().toISOString(),
+   680→      });
+   681→      // به‌روزرسانی مخاطب
+   682→      await supabase
+   683→        .from("contacts")
+   684→        .update({ linked_telegram_id: telegramUserId })
+   685→        .eq("id", contact.id);
+   686→      await tg(
+   687→        chatId,
+   688→        "✅ اتصال موفق بود!\\n\\n" +
+   689→          "شما به دفتر متصل شدید.\\n" +
+   690→          "نام طرف حساب: " + contact.display_name + "\\n" +
+   691→          "سطح دسترسی: " + scopeLabel(linkCode.scope) + "\\n\\n" +
+   692→          "حالا با <code>/balance</code> مانده خود را ببینید."
+   693→      );
+   694→      return json({ ok: true });
+   695→    }
+   696→
+   697→    if (text === "/balance" || text === "/transactions") {
+   698→      const { data: link } = await supabase
+   699→        .from("telegram_links")
+   700→        .select("contact_id, scope")
+   701→        .eq("telegram_user_id", telegramUserId)
+   702→        .eq("status", "linked")
+   703→        .maybeSingle();
+   704→      if (!link) {
+   705→        await tg(chatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
+   706→        return json({ ok: true });
+   707→      }
+   708→      const { data: txns } = await supabase
+   709→        .from("transactions")
+   710→        .select("transaction_type, amount, currency, effective_at, description")
+   711→        .eq("contact_id", link.contact_id)
+   712→        .eq("status", "POSTED")
+   713→        .order("effective_at", { ascending: false });
+   714→      const { receivable, payable } = computeBalance(txns ?? []);
+   715→      const currency = (txns && txns[0]?.currency) || "IRT";
+   716→      const label = currency === "IRT" ? "تومان" : "ریال";
+   717→      let msg = "📊 <b>مانده شما</b>\\n\\n";
+   718→      msg += "🟢 طلب از شما (به شما بدهکار است): <b>" + fmt(receivable) + "</b> " + label + "\\n";
+   719→      msg += "🔴 بدهی شما (به او بدهکارید): <b>" + fmt(payable) + "</b> " + label + "\\n";
+   720→      if (text === "/transactions" &&
+   721→          (link.scope === "transaction_list" || link.scope === "transaction_details")) {
+   722→        msg += "\\n<b>آخرین تراکنش‌ها:</b>\\n";
+   723→        for (const t of (txns ?? []).slice(0, 10)) {
+   724→          msg += "• " + t.effective_at + " | " + t.transaction_type + " | " + fmt(t.amount) + " " + label;
+   725→          if (t.description) msg += " | " + t.description;
+   726→          msg += "\\n";
+   727→        }
+   728→      } else if (text === "/transactions") {
+   729→        msg += "\\n⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.";
+   730→      } else {
+   731→        msg += "\\nبرای مشاهده تراکنش‌ها (اگر مجاز باشد): <code>/transactions</code>";
+   732→      }
+   733→      await tg(chatId, msg);
+   734→      return json({ ok: true });
+   735→    }
+   736→
+   737→    if (text === "/help") {
+   738→      await tg(
+   739→        chatId,
+   740→        "📖 <b>دستورها</b>\\n\\n" +
+   741→          "• <code>/start</code> — شروع\\n" +
+   742→          "• <code>/link 123456</code> — اتصال با کد\\n" +
+   743→          "• <code>/balance</code> — مشاهده مانده\\n" +
+   744→          "• <code>/transactions</code> — فهرست تراکنش‌ها (اگر مجاز باشد)\\n" +
+   745→          "• <code>/help</code> — این پیام"
+   746→      );
+   747→      return json({ ok: true });
+   748→    }
+   749→
+   750→    await tg(
+   751→      chatId,
+   752→      "❓ دستور نامشخص. <code>/help</code> را بزن."
+   753→    );
+   754→    return json({ ok: true });
+   755→  } catch (e) {
+   756→    console.error("Bot error:", e);
+   757→    await tg(chatId, "⚠️ خطای سرور. بعداً تلاش کنید.");
+   758→    return json({ ok: true });
+   759→  }
+   760→});
+   761→`;
+   762→

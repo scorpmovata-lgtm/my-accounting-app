@@ -43,8 +43,6 @@ export function ConnectTab() {
   const refresh = useAuthStore((s) => s.refresh);
 
   const realMode = useAccountingStore((s) => s.realMode);
-  const activateRealMode = useAccountingStore((s) => s.activateRealMode);
-  const deactivateRealMode = useAccountingStore((s) => s.deactivateRealMode);
 
   const { toast } = useToast();
 
@@ -56,19 +54,6 @@ export function ConnectTab() {
     setMounted(true);
     setConfig(getSupabaseConfig());
   }, []);
-
-  // فعال‌سازی real mode هنگام login موفق
-  useEffect(() => {
-    if (authStatus === "authenticated" && authUser && !realMode && config) {
-      // activate real mode با ledgerId کاربر (admin بدون ledgerId است)
-      if (authUser.ledgerId) {
-        void activateRealMode(authUser.ledgerId, authUser.displayName ?? "صاحب دفتر");
-      }
-    }
-    if (authStatus === "anonymous" && realMode) {
-      deactivateRealMode();
-    }
-  }, [authStatus, authUser, realMode, config, activateRealMode, deactivateRealMode]);
 
   const [url, setUrl] = useState("");
   const [anonKey, setAnonKey] = useState("");

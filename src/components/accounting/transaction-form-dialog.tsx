@@ -106,9 +106,8 @@ export function TransactionFormDialog() {
   }, [contactBalance, amountNum, isReceipt, isPayment]);
 
   // وقتی مقدار amount یا نوع یا مخاطب تغییر می‌کند، تأیید overpay ریست می‌شود
-  // (useEffect ساده با setState)
   function resetOverpayConfirmation() {
-    if (overpayConfirmed) setOverpayConfirmed(false);
+    setOverpayConfirmed((prev) => (prev ? false : prev));
   }
 
   function reset() {
@@ -217,17 +216,20 @@ export function TransactionFormDialog() {
           افزودن تراکنش
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-persian">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-persian">
         <DialogHeader>
-          <DialogTitle>ثبت تراکنش جدید</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Plus className="h-5 w-5" />
+            ثبت تراکنش جدید
+          </DialogTitle>
           <DialogDescription>
             طبق قواعد حسابداری، طلب و بدهی ناخالص جداگانه ثبت می‌شوند. دریافت
             نباید از طلب باز بیشتر باشد و پرداخت نباید از بدهی باز بیشتر باشد.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-4 py-2">
-          {/* نوع تراکنش */}
+        <div className="grid gap-3 py-1">
+          {/* نوع عملیات — ردیف کامل */}
           <div className="grid gap-2">
             <Label>نوع عملیات</Label>
             <Select
@@ -237,7 +239,7 @@ export function TransactionFormDialog() {
                 resetOverpayConfirmation();
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="h-10">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -254,7 +256,7 @@ export function TransactionFormDialog() {
             </Select>
           </div>
 
-          {/* طرف حساب و سرفصل */}
+          {/* طرف حساب و سرفصل — دو ستونی */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label>طرف حساب</Label>
@@ -265,7 +267,7 @@ export function TransactionFormDialog() {
                   resetOverpayConfirmation();
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-10">
                   <SelectValue placeholder="انتخاب کنید" />
                 </SelectTrigger>
                 <SelectContent>
@@ -280,7 +282,7 @@ export function TransactionFormDialog() {
             <div className="grid gap-2">
               <Label>سرفصل</Label>
               <Select value={categoryId} onValueChange={setCategoryId}>
-                <SelectTrigger>
+                <SelectTrigger className="h-10">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -314,7 +316,7 @@ export function TransactionFormDialog() {
             </div>
           )}
 
-          {/* مبلغ و واحد */}
+          {/* مبلغ و واحد — دو ستونی */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="grid gap-2">
               <Label>مبلغ</Label>
@@ -327,7 +329,7 @@ export function TransactionFormDialog() {
                 inputMode="numeric"
                 placeholder="مثلاً ۵۰۰٬۰۰۰"
                 dir="ltr"
-                className="text-right font-mono"
+                className="h-10 text-right font-medium text-lg"
               />
               {amountNum > 0 && (
                 <span className="text-xs text-muted-foreground">
@@ -341,7 +343,7 @@ export function TransactionFormDialog() {
                 value={currency}
                 onValueChange={(v) => setCurrency(v as Currency)}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-10">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -418,13 +420,13 @@ export function TransactionFormDialog() {
             </div>
           )}
 
-          {/* تاریخ */}
+          {/* تاریخ مؤثر — ردیف کامل */}
           <div className="grid gap-2">
             <Label>تاریخ مؤثر</Label>
             <JalaliDatePicker value={date} onChange={setDate} />
           </div>
 
-          {/* توضیح */}
+          {/* توضیحات — ردیف کامل */}
           <div className="grid gap-2">
             <Label>توضیحات (اختیاری)</Label>
             <Textarea
@@ -432,19 +434,25 @@ export function TransactionFormDialog() {
               onChange={(e) => setDescription(e.target.value)}
               placeholder="مثلاً: فروش کالا، قرض، اجاره..."
               rows={2}
+              className="min-h-[60px]"
             />
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex-col gap-2 sm:flex-row">
           <Button
             variant="outline"
             onClick={() => setOpen(false)}
             disabled={submitting}
+            className="w-full sm:w-auto"
           >
             انصراف
           </Button>
-          <Button onClick={handleSubmit} disabled={submitDisabled}>
+          <Button
+            onClick={handleSubmit}
+            disabled={submitDisabled}
+            className="w-full sm:w-auto"
+          >
             {submitting ? (
               <Loader2 className="h-4 w-4 ml-1 animate-spin" />
             ) : (

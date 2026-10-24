@@ -577,6 +577,10 @@ function fmt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+function faDigits(s: string): string {
+  return s.replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[parseInt(d, 10)]);
+}
+
 function computeBalance(txns: Array<{ transaction_type: string; amount: number }>) {
   let receivable = 0;
   let payable = 0;
@@ -608,11 +612,101 @@ Deno.serve(async (req: Request) => {
       text?: string;
       from?: { id: number; username?: string };
     };
+    callback_query?: {
+      id: string;
+      data?: string;
+      from?: { id: number };
+      message?: { chat?: { id: number }; text?: string };
+    };
   };
   try {
     update = await req.json();
   } catch {
     return json({ error: "Invalid JSON" }, 400);
+  }
+
+  // مدیریت callback_query از inline keyboard
+  if (update.callback_query) {
+    const callbackId = update.callback_query.id;
+    const data = update.callback_query.data;
+    const cbChatId = update.callback_query.message?.chat?.id;
+    const cbTelegramUserId = update.callback_query.from?.id;
+
+    // پاسخ به callback برای برداشتن loading دکمه
+    await fetch(TELEGRAM_API + "/answerCallbackQuery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId }),
+    });
+
+    if (!cbChatId || !cbTelegramUserId) return json({ ok: true });
+
+    const cbSupabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+    try {
+      if (data === "back") {
+        await tg(
+          cbChatId,
+          "📋 <b>منوی اصلی</b>\\n\\n" +
+            "برای مشاهده مانده: <code>/balance</code>\\n" +
+            "برای مشاهده تراکنش‌ها: <code>/transactions</code>\\n" +
+            "برای راهنما: <code>/help</code>"
+        );
+        return json({ ok: true });
+      }
+
+      if (data && data.startsWith("txns_")) {
+        const { data: link } = await cbSupabase
+          .from("telegram_links")
+          .select("contact_id, scope")
+          .eq("telegram_user_id", cbTelegramUserId)
+          .eq("status", "linked")
+          .maybeSingle();
+        if (!link) {
+          await tg(cbChatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
+          return json({ ok: true });
+        }
+        if (link.scope !== "transaction_list" && link.scope !== "transaction_details") {
+          await tg(cbChatId, "⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.");
+          return json({ ok: true });
+        }
+        const limit = data === "txns_all" ? 999 : parseInt(data.split("_")[1] ?? "10", 10);
+        const { data: txns } = await cbSupabase
+          .from("transactions")
+          .select("transaction_type, amount, currency, effective_at, description")
+          .eq("contact_id", link.contact_id)
+          .eq("status", "POSTED")
+          .order("effective_at", { ascending: false })
+          .limit(limit);
+        const txList = txns ?? [];
+        if (txList.length === 0) {
+          await tg(cbChatId, "📭 تراکنشی برای نمایش وجود ندارد.");
+          return json({ ok: true });
+        }
+        const currency = txList[0]?.currency || "IRT";
+        const label = currency === "IRT" ? "تومان" : "ریال";
+        const countLabel = data === "txns_all" ? "همه" : faDigits(limit + "") + " مورد";
+        let msg = "📋 <b>تراکنش‌ها</b> (" + countLabel + ")\\n\\n";
+        for (const t of txList) {
+          msg += "• " + t.effective_at + " | " + t.transaction_type + " | " + fmt(t.amount) + " " + label;
+          if (t.description) msg += " | " + t.description;
+          msg += "\\n";
+        }
+        const backKeyboard = {
+          inline_keyboard: [
+            [{ text: "↩ بازگشت", callback_data: "back" }]
+          ]
+        };
+        await tg(cbChatId, msg, backKeyboard);
+        return json({ ok: true });
+      }
+
+      return json({ ok: true });
+    } catch (e) {
+      console.error("Callback error:", e);
+      await tg(cbChatId, "⚠️ خطای سرور. بعداً تلاش کنید.");
+      return json({ ok: true });
+    }
   }
 
   const message = update.message;
@@ -694,7 +788,7 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
-    if (text === "/balance" || text === "/transactions") {
+    if (text === "/balance") {
       const { data: link } = await supabase
         .from("telegram_links")
         .select("contact_id, scope")
@@ -717,20 +811,45 @@ Deno.serve(async (req: Request) => {
       let msg = "📊 <b>مانده شما</b>\\n\\n";
       msg += "🟢 طلب از شما (به شما بدهکار است): <b>" + fmt(receivable) + "</b> " + label + "\\n";
       msg += "🔴 بدهی شما (به او بدهکارید): <b>" + fmt(payable) + "</b> " + label + "\\n";
-      if (text === "/transactions" &&
-          (link.scope === "transaction_list" || link.scope === "transaction_details")) {
-        msg += "\\n<b>آخرین تراکنش‌ها:</b>\\n";
-        for (const t of (txns ?? []).slice(0, 10)) {
-          msg += "• " + t.effective_at + " | " + t.transaction_type + " | " + fmt(t.amount) + " " + label;
-          if (t.description) msg += " | " + t.description;
-          msg += "\\n";
-        }
-      } else if (text === "/transactions") {
-        msg += "\\n⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.";
-      } else {
-        msg += "\\nبرای مشاهده تراکنش‌ها (اگر مجاز باشد): <code>/transactions</code>";
-      }
+      msg += "\\nبرای مشاهده تراکنش‌ها: <code>/transactions</code>";
       await tg(chatId, msg);
+      return json({ ok: true });
+    }
+
+    if (text === "/transactions" || text === "📋 تراکنش‌ها") {
+      const { data: link } = await supabase
+        .from("telegram_links")
+        .select("contact_id, scope")
+        .eq("telegram_user_id", telegramUserId)
+        .eq("status", "linked")
+        .maybeSingle();
+      if (!link) {
+        await tg(chatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
+        return json({ ok: true });
+      }
+      if (link.scope !== "transaction_list" && link.scope !== "transaction_details") {
+        await tg(
+          chatId,
+          "⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.\\n\\n" +
+            "برای مشاهده مانده: <code>/balance</code>"
+        );
+        return json({ ok: true });
+      }
+      // نمایش inline keyboard برای انتخاب تعداد تراکنش‌ها
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: "۱۰ تراکنش اخیر", callback_data: "txns_10" }],
+          [{ text: "۳۰ تراکنش اخیر", callback_data: "txns_30" }],
+          [{ text: "همه تراکنش‌ها", callback_data: "txns_all" }],
+          [{ text: "↩ بازگشت", callback_data: "back" }]
+        ]
+      };
+      await tg(
+        chatId,
+        "📋 <b>تراکنش‌ها</b>\\n\\n" +
+          "تعداد تراکنش‌هایی که می‌خواهید مشاهده کنید را انتخاب کنید:",
+        keyboard
+      );
       return json({ ok: true });
     }
 
@@ -741,7 +860,7 @@ Deno.serve(async (req: Request) => {
           "• <code>/start</code> — شروع\\n" +
           "• <code>/link 123456</code> — اتصال با کد\\n" +
           "• <code>/balance</code> — مشاهده مانده\\n" +
-          "• <code>/transactions</code> — فهرست تراکنش‌ها (اگر مجاز باشد)\\n" +
+          "• <code>/transactions</code> — انتخاب تعداد تراکنش‌ها برای مشاهده\\n" +
           "• <code>/help</code> — این پیام"
       );
       return json({ ok: true });

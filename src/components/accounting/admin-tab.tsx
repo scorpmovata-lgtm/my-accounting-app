@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Database,
   Shield,
+  Pencil,
 } from "lucide-react";
 import {
   Card,
@@ -37,9 +38,18 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   adminListUsers,
   adminCreateUser,
   adminDeleteUser,
+  adminUpdateUser,
   adminBackup,
   adminRestore,
   AdminUser,
@@ -69,6 +79,11 @@ export function AdminTab() {
   const [restoring, setRestoring] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingRestore, setPendingRestore] = useState<BackupData | null>(null);
+
+  // دیالوگ ویرایش نام نمایشی
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
+  const [editDisplayName, setEditDisplayName] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   async function loadUsers() {
     setLoadingUsers(true);
@@ -129,6 +144,48 @@ export function AdminTab() {
         description: "عملیات ناموفق بود. ممکن است ادمین نباشید یا اتصال قطع شده باشد.",
         variant: "destructive",
       });
+    }
+  }
+
+  function openEditDialog(u: AdminUser) {
+    setEditingUser(u);
+    setEditDisplayName(u.displayName ?? "");
+  }
+
+  async function handleUpdateDisplayName() {
+    if (!editingUser) return;
+    const name = editDisplayName.trim();
+    if (!name) {
+      toast({
+        title: "خطا",
+        description: "نام نمایشی نمی‌تواند خالی باشد.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const result = await adminUpdateUser(editingUser.id, name);
+      if (result.ok) {
+        toast({
+          title: "نام نمایشی به‌روزرسانی شد",
+          description: `نام جدید: ${name}`,
+        });
+        setEditingUser(null);
+        await loadUsers();
+        // اگر کاربر فعلی را ویرایش کردیم، refresh کن تا auth store هم به‌روز شود
+        if (editingUser.id === authUser?.id) {
+          await refresh();
+        }
+      } else {
+        toast({
+          title: "خطا در به‌روزرسانی",
+          description: result.error ?? "خطای ناشناخته",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -306,7 +363,20 @@ export function AdminTab() {
                         )}
                       </div>
                     </div>
-                    <div className="shrink-0">
+                    <div className="shrink-0 flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={u.id === authUser?.id}
+                        title={
+                          u.id === authUser?.id
+                            ? "نمی‌توانید نام خود را اینجا ویرایش کنید"
+                            : "ویرایش نام نمایشی"
+                        }
+                        onClick={() => openEditDialog(u)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button
@@ -514,6 +584,75 @@ export function AdminTab() {
           </div>
         </CardContent>
       </Card>
+
+      {/* دیالوگ ویرایش نام نمایشی */}
+      <Dialog
+        open={!!editingUser}
+        onOpenChange={(o) => {
+          if (!o) {
+            setEditingUser(null);
+            setEditDisplayName("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" />
+              ویرایش نام نمایشی
+            </DialogTitle>
+            <DialogDescription>
+              {editingUser && (
+                <>
+                  نام نمایشی کاربر{" "}
+                  <span dir="ltr" className="font-medium">
+                    {editingUser.email ?? "—"}
+                  </span>{" "}
+                  را تغییر دهید. این نام در هدر و گزارش‌ها نمایش داده می‌شود.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-2">
+            <Label htmlFor="edit-name">نام نمایشی</Label>
+            <Input
+              id="edit-name"
+              value={editDisplayName}
+              onChange={(e) => setEditDisplayName(e.target.value)}
+              placeholder="مثلاً: علی رضایی"
+              disabled={savingEdit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !savingEdit) {
+                  void handleUpdateDisplayName();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingUser(null);
+                setEditDisplayName("");
+              }}
+              disabled={savingEdit}
+            >
+              انصراف
+            </Button>
+            <Button
+              onClick={handleUpdateDisplayName}
+              disabled={savingEdit || !editDisplayName.trim()}
+            >
+              {savingEdit ? (
+                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 ml-1" />
+              )}
+              ذخیره
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* دیالوگ تأیید بازگردانی */}
       <AlertDialog
