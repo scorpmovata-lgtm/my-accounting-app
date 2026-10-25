@@ -222,36 +222,14 @@ export function AppShell() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-40">
-        <div className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <BookOpenText className="h-6 w-6 text-primary shrink-0" />
-            <div className="flex flex-col min-w-0">
-              <span className="font-bold leading-tight truncate">
-                {isLoggedIn
-                  ? (authUser?.displayName ?? authUser?.email ?? "—")
-                  : ledger.name}
-              </span>
-              <span className="text-xs text-muted-foreground leading-tight truncate">
-                {headerSubtitle}
-              </span>
-            </div>
-            {realMode && (
-              <Badge
-                variant="secondary"
-                className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 mr-1 shrink-0"
-              >
-                <Cloud className="h-3 w-3 ml-1" />
-                متصل
-              </Badge>
-            )}
-          </div>
-
+        <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-2">
+          {/* سمت راست (در RTL = اول): همبرگر */}
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
             <SheetTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10"
+                className="h-10 w-10 shrink-0"
                 aria-label="باز کردن منو"
               >
                 <Menu className="h-5 w-5" />
@@ -357,6 +335,28 @@ export function AppShell() {
               </div>
             </SheetContent>
           </Sheet>
+
+          {/* نام اپ + کاربر (بعد از همبرگر، در سمت راست) */}
+          <BookOpenText className="h-6 w-6 text-primary shrink-0" />
+          <div className="flex flex-col min-w-0">
+            <span className="font-bold leading-tight truncate">
+              {isLoggedIn
+                ? (authUser?.displayName ?? authUser?.email ?? "—")
+                : ledger.name}
+            </span>
+            <span className="text-xs text-muted-foreground leading-tight truncate">
+              {headerSubtitle}
+            </span>
+          </div>
+          {realMode && (
+            <Badge
+              variant="secondary"
+              className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 mr-1 shrink-0"
+            >
+              <Cloud className="h-3 w-3 ml-1" />
+              متصل
+            </Badge>
+          )}
         </div>
       </header>
 

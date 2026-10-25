@@ -367,12 +367,7 @@ export function AdminTab() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        disabled={u.id === authUser?.id}
-                        title={
-                          u.id === authUser?.id
-                            ? "نمی‌توانید نام خود را اینجا ویرایش کنید"
-                            : "ویرایش نام نمایشی"
-                        }
+                        title="ویرایش نام نمایشی"
                         onClick={() => openEditDialog(u)}
                       >
                         <Pencil className="h-4 w-4" />
