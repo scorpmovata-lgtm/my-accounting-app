@@ -142,10 +142,7 @@ Deno.serve(async (req: Request) => {
           await tg(cbChatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
           return json({ ok: true });
         }
-        if (link.scope !== "transaction_list" && link.scope !== "transaction_details") {
-          await tg(cbChatId, "⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.");
-          return json({ ok: true });
-        }
+        // حذف محدودیت scope — همه کاربران متصل می‌توانند تراکنش‌ها را ببینند
         const limit = data === "txns_all" ? 999 : parseInt(data.split("_")[1] ?? "10", 10);
         const { data: txns } = await cbSupabase
           .from("transactions")
@@ -303,14 +300,7 @@ Deno.serve(async (req: Request) => {
         await tg(chatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
         return json({ ok: true });
       }
-      if (link.scope !== "transaction_list" && link.scope !== "transaction_details") {
-        await tg(
-          chatId,
-          "⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.\n\n" +
-            "برای مشاهده مانده: <code>/balance</code>"
-        );
-        return json({ ok: true });
-      }
+      // حذف محدودیت scope — همه کاربران متصل می‌توانند تراکنش‌ها را ببینند
       // نمایش inline keyboard برای انتخاب تعداد تراکنش‌ها
       const keyboard = {
         inline_keyboard: [
