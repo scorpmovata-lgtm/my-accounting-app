@@ -227,7 +227,9 @@ export function AppShell() {
             <BookOpenText className="h-6 w-6 text-primary shrink-0" />
             <div className="flex flex-col min-w-0">
               <span className="font-bold leading-tight truncate">
-                {ledger.name}
+                {isLoggedIn
+                  ? (authUser?.displayName ?? authUser?.email ?? "—")
+                  : ledger.name}
               </span>
               <span className="text-xs text-muted-foreground leading-tight truncate">
                 {headerSubtitle}

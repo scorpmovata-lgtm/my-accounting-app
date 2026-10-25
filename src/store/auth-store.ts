@@ -38,19 +38,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   init: () => {
     const client = getSupabaseClient();
     if (!client) {
-      set({ status: "anonymous" });
+      // حداقل ۵۰۰ms صبر کن تا flash رخ ندهد
+      setTimeout(() => set({ status: "anonymous" }), 500);
       return () => {};
     }
 
-    // استراتژی جدید: ابتدا onAuthStateChange را تنظیم کن
-    // سپس با timeout fallback بررسی کن
-    // این کار از race condition جلوگیری می‌کند
+    // رفع مشکل flash: یک flag برای اینکه آیا INITIAL_SESSION دریافت شده یا نه
+    let initialSessionReceived = false;
 
     // ۱. گوش دادن به تغییرات auth
-    // INITIAL_SESSION: وقتی session از localStorage بار می‌شود
-    // SIGNED_IN: وقتی کاربر وارد می‌شود
-    // TOKEN_REFRESHED: وقتی توکن تمدید می‌شود
-    // SIGNED_OUT: وقتی کاربر خارج می‌شود
     const { data: subscription } = client.auth.onAuthStateChange(
       async (event, session) => {
         if (
@@ -58,11 +54,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           event === "SIGNED_IN" ||
           event === "TOKEN_REFRESHED"
         ) {
+          initialSessionReceived = true;
           if (session) {
-            // session موجود است — user info را fetch کن
             await get().refresh();
           } else {
-            // session خالی است — کاربر وارد نشده
             set({ status: "anonymous", user: null });
           }
         } else if (event === "SIGNED_OUT") {
@@ -71,11 +66,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     );
 
-    // ۲. Fallback: اگر INITIAL_SESSION قبل از تنظیم listener صدا زده شده باشد
-    // بعد از ۲ ثانیه، اگر هنوز loading است، دستی getSession را امتحان کن
+    // ۲. Fallback: اگر INITIAL_SESSION دریافت نشد، بعد از ۲ ثانیه بررسی کن
     const fallbackTimer = setTimeout(async () => {
       const currentStatus = get().status;
-      if (currentStatus === "loading") {
+      if (currentStatus === "loading" && !initialSessionReceived) {
         try {
           const { data } = await client.auth.getSession();
           if (data.session) {

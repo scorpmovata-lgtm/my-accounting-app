@@ -152,5 +152,38 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true });
   }
 
+  // PUT: به‌روزرسانی display_name کاربر
+  if (req.method === "PUT") {
+    const url = new URL(req.url);
+    const userId = url.searchParams.get("id");
+    if (!userId) {
+      return json({ error: "id query param required" }, 400);
+    }
+    let input: { display_name?: string };
+    try {
+      input = await req.json();
+    } catch {
+      return json({ error: "Invalid JSON" }, 400);
+    }
+    if (!input.display_name || !input.display_name.trim()) {
+      return json({ error: "display_name required" }, 400);
+    }
+    const { error } = await supabase.auth.admin.updateUserById(userId, {
+      user_metadata: { display_name: input.display_name.trim() },
+    });
+    if (error) {
+      return json({ error: error.message }, 400);
+    }
+    await supabase.from("audit_logs").insert({
+      actor_id: user.sub,
+      action: "ADMIN_UPDATE_USER",
+      entity_type: "User",
+      entity_id: userId,
+      result: "success",
+      details: "Updated display_name for user " + userId,
+    });
+    return json({ ok: true });
+  }
+
   return json({ error: "Method not allowed" }, 405);
 });

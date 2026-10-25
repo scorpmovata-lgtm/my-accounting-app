@@ -53,6 +53,10 @@ function fmt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+function faDigits(s: string): string {
+  return s.replace(/[0-9]/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[parseInt(d, 10)]);
+}
+
 function computeBalance(txns: Array<{ transaction_type: string; amount: number }>) {
   let receivable = 0;
   let payable = 0;
@@ -70,22 +74,6 @@ function computeBalance(txns: Array<{ transaction_type: string; amount: number }
   return { receivable, payable };
 }
 
-// منوی فارسی دائمی پایین صفحه — کاربر به‌جای تایپ، دکمه را بزند
-function mainMenuKeyboard() {
-  return {
-    keyboard: [
-      [{ text: "📊 مانده من" }, { text: "📋 تراکنش‌ها" }],
-      [{ text: "🔗 اتصال با کد" }, { text: "❓ راهنما" }],
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: false,
-    is_persistent: true,
-  };
-}
-
-// منوی اتصال با کد — وقتی کاربر «🔗 اتصال با کد» را می‌زند، این منو باز می‌شود
-// (در نسخه فعلی فقط راهنما نشان می‌دهیم چون Telegram ورودی text را هندل می‌کند)
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -100,11 +88,101 @@ Deno.serve(async (req: Request) => {
       text?: string;
       from?: { id: number; username?: string };
     };
+    callback_query?: {
+      id: string;
+      data?: string;
+      from?: { id: number };
+      message?: { chat?: { id: number }; text?: string };
+    };
   };
   try {
     update = await req.json();
   } catch {
     return json({ error: "Invalid JSON" }, 400);
+  }
+
+  // مدیریت callback_query از inline keyboard
+  if (update.callback_query) {
+    const callbackId = update.callback_query.id;
+    const data = update.callback_query.data;
+    const cbChatId = update.callback_query.message?.chat?.id;
+    const cbTelegramUserId = update.callback_query.from?.id;
+
+    // پاسخ به callback برای برداشتن loading دکمه
+    await fetch(TELEGRAM_API + "/answerCallbackQuery", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackId }),
+    });
+
+    if (!cbChatId || !cbTelegramUserId) return json({ ok: true });
+
+    const cbSupabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
+    try {
+      if (data === "back") {
+        await tg(
+          cbChatId,
+          "📋 <b>منوی اصلی</b>\n\n" +
+            "برای مشاهده مانده: <code>/balance</code>\n" +
+            "برای مشاهده تراکنش‌ها: <code>/transactions</code>\n" +
+            "برای راهنما: <code>/help</code>"
+        );
+        return json({ ok: true });
+      }
+
+      if (data && data.startsWith("txns_")) {
+        const { data: link } = await cbSupabase
+          .from("telegram_links")
+          .select("contact_id, scope")
+          .eq("telegram_user_id", cbTelegramUserId)
+          .eq("status", "linked")
+          .maybeSingle();
+        if (!link) {
+          await tg(cbChatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
+          return json({ ok: true });
+        }
+        if (link.scope !== "transaction_list" && link.scope !== "transaction_details") {
+          await tg(cbChatId, "⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.");
+          return json({ ok: true });
+        }
+        const limit = data === "txns_all" ? 999 : parseInt(data.split("_")[1] ?? "10", 10);
+        const { data: txns } = await cbSupabase
+          .from("transactions")
+          .select("transaction_type, amount, currency, effective_at, description")
+          .eq("contact_id", link.contact_id)
+          .eq("status", "POSTED")
+          .order("effective_at", { ascending: false })
+          .limit(limit);
+        const txList = txns ?? [];
+        if (txList.length === 0) {
+          await tg(cbChatId, "📭 تراکنشی برای نمایش وجود ندارد.");
+          return json({ ok: true });
+        }
+        const currency = txList[0]?.currency || "IRT";
+        const label = currency === "IRT" ? "تومان" : "ریال";
+        const countLabel = data === "txns_all" ? "همه" : faDigits(limit + "") + " مورد";
+        let msg = "📋 <b>تراکنش‌ها</b> (" + countLabel + ")\n\n";
+        for (const t of txList) {
+          msg += "• " + t.effective_at + " | " + t.transaction_type + " | " + fmt(t.amount) + " " + label;
+          if (t.description) msg += " | " + t.description;
+          msg += "\n";
+        }
+        const backKeyboard = {
+          inline_keyboard: [
+            [{ text: "↩ بازگشت", callback_data: "back" }]
+          ]
+        };
+        await tg(cbChatId, msg, backKeyboard);
+        return json({ ok: true });
+      }
+
+      return json({ ok: true });
+    } catch (e) {
+      console.error("Callback error:", e);
+      await tg(cbChatId, "⚠️ خطای سرور. بعداً تلاش کنید.");
+      return json({ ok: true });
+    }
   }
 
   const message = update.message;
@@ -117,41 +195,22 @@ Deno.serve(async (req: Request) => {
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   try {
-    // ===== /start — خوش‌آمدگویی + نمایش منوی دائمی =====
     if (text === "/start") {
       await tg(
         chatId,
         "👋 سلام!\n\n" +
-          "این ربات برای مشاهده مانده بدهی و طلب شماست.\n\n" +
-          "📝 <b>چه کار کنید:</b>\n" +
-          "۱. اگر از صاحب دفتر کد ۶ رقمی گرفته‌اید، دکمه «🔗 اتصال با کد» را بزنید و کد را بفرستید.\n" +
-          "۲. بعد از اتصال، دکمه «📊 مانده من» را بزنید تا مانده خود را ببینید.\n\n" +
-          "همچنین می‌توانید دستورها را تایپ کنید: <code>/balance</code>، <code>/transactions</code>، <code>/help</code>",
-        mainMenuKeyboard()
+          "این ربات برای مشاهده مانده بدهی و طلب شماست.\n" +
+          "برای اتصال، کد ۶ رقمی که از صاحب دفتر گرفته‌اید را بفرستید:\n" +
+          "<code>/link 123456</code>\n\n" +
+          "بعد از اتصال: <code>/balance</code> برای مشاهده مانده."
       );
       return json({ ok: true });
     }
 
-    // ===== اتصال با کد =====
-    // حالت‌های پذیرفته‌شده: /link 123456 یا "🔗 اتصال با کد" یا عدد ۶ رقمی مستقیم
-    const isLinkButton = text === "🔗 اتصال با کد";
-    const isLinkCommand = text.startsWith("/link ");
-    const isSixDigits = /^\d{6}$/.test(text);
-
-    if (isLinkButton) {
-      await tg(
-        chatId,
-        "🔗 برای اتصال، کد ۶ رقمی که از صاحب دفتر گرفته‌اید را بفرستید:\n" +
-          "مثال: <code>123456</code> یا <code>/link 123456</code>",
-        mainMenuKeyboard()
-      );
-      return json({ ok: true });
-    }
-
-    if (isLinkCommand || isSixDigits) {
-      const code = isLinkCommand ? text.replace("/link ", "").trim() : text;
+    if (text.startsWith("/link ")) {
+      const code = text.replace("/link ", "").trim();
       if (!/^\d{6}$/.test(code)) {
-        await tg(chatId, "❌ کد باید ۶ رقم باشد. مثال: <code>/link 123456</code>", mainMenuKeyboard());
+        await tg(chatId, "❌ کد باید ۶ رقم باشد. مثال: <code>/link 123456</code>");
         return json({ ok: true });
       }
       const { data: linkCode } = await supabase
@@ -162,7 +221,7 @@ Deno.serve(async (req: Request) => {
         .gt("expires_at", new Date().toISOString())
         .maybeSingle();
       if (!linkCode) {
-        await tg(chatId, "❌ کد نامعتبر، منقضی یا قبلاً استفاده شده است.", mainMenuKeyboard());
+        await tg(chatId, "❌ کد نامعتبر، منقضی یا قبلاً استفاده شده است.");
         return json({ ok: true });
       }
       const { data: contact } = await supabase
@@ -171,7 +230,7 @@ Deno.serve(async (req: Request) => {
         .eq("id", linkCode.contact_id)
         .single();
       if (!contact) {
-        await tg(chatId, "❌ مخاطب مرتبط پیدا نشد.", mainMenuKeyboard());
+        await tg(chatId, "❌ مخاطب مرتبط پیدا نشد.");
         return json({ ok: true });
       }
       // علامت‌گذاری کد به‌عنوان استفاده‌شده
@@ -200,18 +259,12 @@ Deno.serve(async (req: Request) => {
           "شما به دفتر متصل شدید.\n" +
           "نام طرف حساب: " + contact.display_name + "\n" +
           "سطح دسترسی: " + scopeLabel(linkCode.scope) + "\n\n" +
-          "حالا دکمه «📊 مانده من» را بزنید تا مانده خود را ببینید.",
-        mainMenuKeyboard()
+          "حالا با <code>/balance</code> مانده خود را ببینید."
       );
       return json({ ok: true });
     }
 
-    // ===== مانده و تراکنش‌ها =====
-    // حالت‌های پذیرفته‌شده: /balance، 📊 مانده من، /transactions، 📋 تراکنش‌ها
-    const isBalance = text === "/balance" || text === "📊 مانده من";
-    const isTransactions = text === "/transactions" || text === "📋 تراکنش‌ها";
-
-    if (isBalance || isTransactions) {
+    if (text === "/balance") {
       const { data: link } = await supabase
         .from("telegram_links")
         .select("contact_id, scope")
@@ -219,12 +272,7 @@ Deno.serve(async (req: Request) => {
         .eq("status", "linked")
         .maybeSingle();
       if (!link) {
-        await tg(
-          chatId,
-          "❌ حساب شما متصل نیست.\n" +
-            "دکمه «🔗 اتصال با کد» را بزنید و کد ۶ رقمی خود را بفرستید.",
-          mainMenuKeyboard()
-        );
+        await tg(chatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
         return json({ ok: true });
       }
       const { data: txns } = await supabase
@@ -239,50 +287,69 @@ Deno.serve(async (req: Request) => {
       let msg = "📊 <b>مانده شما</b>\n\n";
       msg += "🟢 طلب از شما (به شما بدهکار است): <b>" + fmt(receivable) + "</b> " + label + "\n";
       msg += "🔴 بدهی شما (به او بدهکارید): <b>" + fmt(payable) + "</b> " + label + "\n";
-      if (isTransactions &&
-          (link.scope === "transaction_list" || link.scope === "transaction_details")) {
-        msg += "\n<b>آخرین تراکنش‌ها:</b>\n";
-        for (const t of (txns ?? []).slice(0, 10)) {
-          msg += "• " + t.effective_at + " | " + t.transaction_type + " | " + fmt(t.amount) + " " + label;
-          if (t.description) msg += " | " + t.description;
-          msg += "\n";
-        }
-      } else if (isTransactions) {
-        msg += "\n⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.";
-      } else {
-        msg += "\nبرای مشاهده تراکنش‌ها (اگر مجاز باشد)، دکمه «📋 تراکنش‌ها» را بزنید.";
-      }
-      await tg(chatId, msg, mainMenuKeyboard());
+      msg += "\nبرای مشاهده تراکنش‌ها: <code>/transactions</code>";
+      await tg(chatId, msg);
       return json({ ok: true });
     }
 
-    // ===== راهنما =====
-    if (text === "/help" || text === "❓ راهنما") {
+    if (text === "/transactions" || text === "📋 تراکنش‌ها") {
+      const { data: link } = await supabase
+        .from("telegram_links")
+        .select("contact_id, scope")
+        .eq("telegram_user_id", telegramUserId)
+        .eq("status", "linked")
+        .maybeSingle();
+      if (!link) {
+        await tg(chatId, "❌ حساب شما متصل نیست. با <code>/link 123456</code> اتصال دهید.");
+        return json({ ok: true });
+      }
+      if (link.scope !== "transaction_list" && link.scope !== "transaction_details") {
+        await tg(
+          chatId,
+          "⚠️ سطح دسترسی شما اجازه مشاهده تراکنش‌ها را نمی‌دهد.\n\n" +
+            "برای مشاهده مانده: <code>/balance</code>"
+        );
+        return json({ ok: true });
+      }
+      // نمایش inline keyboard برای انتخاب تعداد تراکنش‌ها
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: "۱۰ تراکنش اخیر", callback_data: "txns_10" }],
+          [{ text: "۳۰ تراکنش اخیر", callback_data: "txns_30" }],
+          [{ text: "همه تراکنش‌ها", callback_data: "txns_all" }],
+          [{ text: "↩ بازگشت", callback_data: "back" }]
+        ]
+      };
       await tg(
         chatId,
-        "📖 <b>راهنما</b>\n\n" +
-          "از دکمه‌های پایین صفحه استفاده کنید:\n\n" +
-          "📊 <b>مانده من</b> — مشاهده طلب و بدهی شما\n" +
-          "📋 <b>تراکنش‌ها</b> — فهرست ۱۰ تراکنش اخیر\n" +
-          "🔗 <b>اتصال با کد</b> — راهنمای اتصال با کد ۶ رقمی\n" +
-          "❓ <b>راهنما</b> — این پیام\n\n" +
-          "همچنین می‌توانید دستورها را تایپ کنید: <code>/start</code>، <code>/link 123456</code>، <code>/balance</code>، <code>/transactions</code>، <code>/help</code>",
-        mainMenuKeyboard()
+        "📋 <b>تراکنش‌ها</b>\n\n" +
+          "تعداد تراکنش‌هایی که می‌خواهید مشاهده کنید را انتخاب کنید:",
+        keyboard
       );
       return json({ ok: true });
     }
 
-    // ===== پیام نامشخص =====
+    if (text === "/help") {
+      await tg(
+        chatId,
+        "📖 <b>دستورها</b>\n\n" +
+          "• <code>/start</code> — شروع\n" +
+          "• <code>/link 123456</code> — اتصال با کد\n" +
+          "• <code>/balance</code> — مشاهده مانده\n" +
+          "• <code>/transactions</code> — انتخاب تعداد تراکنش‌ها برای مشاهده\n" +
+          "• <code>/help</code> — این پیام"
+      );
+      return json({ ok: true });
+    }
+
     await tg(
       chatId,
-      "❓ پیام شما را متوجه نشدم.\n" +
-        "دکمه «❓ راهنما» را بزنید یا <code>/help</code> را تایپ کنید.",
-      mainMenuKeyboard()
+      "❓ دستور نامشخص. <code>/help</code> را بزن."
     );
     return json({ ok: true });
   } catch (e) {
     console.error("Bot error:", e);
-    await tg(chatId, "⚠️ خطای سرور. بعداً تلاش کنید.", mainMenuKeyboard());
+    await tg(chatId, "⚠️ خطای سرور. بعداً تلاش کنید.");
     return json({ ok: true });
   }
 });
