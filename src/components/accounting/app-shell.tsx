@@ -19,6 +19,9 @@ import {
   ShieldCheck,
   Send,
   User as UserIcon,
+  PlusCircle,
+  List as ListIcon,
+  Trash2,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -87,6 +90,7 @@ export function AppShell() {
   const { toast } = useToast();
   const [tab, setTab] = useState<string>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [txDialogOpen, setTxDialogOpen] = useState(false);
 
   // init احراز هویت — فقط در mount
   useEffect(() => {
@@ -360,13 +364,65 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6">
+      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6 pb-20">
         {activeContent}
       </main>
 
+      {/* منوی پایین صفحه: افزودن / لیست / حذف تراکنش */}
+      {isLoggedIn && (
+        <nav
+          className="fixed bottom-0 inset-x-0 z-50 border-t bg-card/95 backdrop-blur-md safe-area-pb"
+          aria-label="منوی تراکنش‌ها"
+        >
+          <div className="mx-auto max-w-6xl grid grid-cols-3">
+            <button
+              type="button"
+              onClick={() => {
+                setTxDialogOpen(true);
+              }}
+              className="flex flex-col items-center justify-center gap-1 py-2.5 text-muted-foreground hover:text-primary transition-colors"
+              aria-label="افزودن تراکنش"
+            >
+              <PlusCircle className="h-5 w-5" />
+              <span className="text-[11px] font-medium">افزودن تراکنش</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectTab("transactions")}
+              className={`flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
+                finalTab === "transactions"
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-primary"
+              }`}
+              aria-label="لیست تراکنش‌ها"
+            >
+              <ListIcon className="h-5 w-5" />
+              <span className="text-[11px] font-medium">لیست تراکنش‌ها</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => selectTab("transactions")}
+              className="flex flex-col items-center justify-center gap-1 py-2.5 text-muted-foreground hover:text-rose-600 transition-colors"
+              aria-label="حذف تراکنش"
+            >
+              <Trash2 className="h-5 w-5" />
+              <span className="text-[11px] font-medium">حذف تراکنش</span>
+            </button>
+          </div>
+        </nav>
+      )}
+
+      {/* دیالوگ افزودن تراکنش (متحرک از منوی پایین) */}
+      {isLoggedIn && (
+        <TransactionFormDialog
+          open={txDialogOpen}
+          onOpenChange={setTxDialogOpen}
+        />
+      )}
+
       <footer className="border-t bg-card/80 backdrop-blur-sm mt-auto">
         <div className="mx-auto max-w-6xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <div>دفتر حسابداری — نسخه {toPersianDigits("1.3")}</div>
+          <div>دفتر حسابداری — نسخه {toPersianDigits("1.4")}</div>
           <div className="flex items-center gap-2 flex-wrap">
             <span>ساخته‌شده با Next.js</span>
             <span aria-hidden>•</span>

@@ -377,15 +377,17 @@ export async function addTransactionViaEdgeFunction(
   const idempotencyKey = `web-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`;
+  // توجه: Edge Function از camelCase استفاده می‌کند (نه snake_case)
   const payload = {
-    contact_id: input.contactId,
-    category_id: input.categoryId ?? null,
-    transaction_type: input.transactionType,
+    contactId: input.contactId,
+    categoryId: input.categoryId ?? null,
+    transactionType: input.transactionType,
     amount: input.amount,
     currency: input.currency,
-    effective_at: input.effectiveAt,
+    effectiveAt: input.effectiveAt,
     description: input.description ?? null,
-    idempotency_key: idempotencyKey,
+    idempotencyKey,
+    allowOverpay: input.allowOverpay ?? false,
   };
   try {
     const res = await fetch(`${base}/functions/v1/create-transaction`, {

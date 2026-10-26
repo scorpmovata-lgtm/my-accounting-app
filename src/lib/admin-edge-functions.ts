@@ -227,11 +227,20 @@ Deno.serve(async (req: Request) => {
     if (!input.display_name || !input.display_name.trim()) {
       return json({ error: "display_name required" }, 400);
     }
-    const { error } = await supabase.auth.admin.updateUserById(userId, {
+    // ۱. به‌روزرسانی در auth.users (metadata)
+    const { error: authError } = await supabase.auth.admin.updateUserById(userId, {
       user_metadata: { display_name: input.display_name.trim() },
     });
-    if (error) {
-      return json({ error: error.message }, 400);
+    if (authError) {
+      return json({ error: authError.message }, 400);
+    }
+    // ۲. به‌روزرسانی در جدول profiles (display_name اصلی)
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({ display_name: input.display_name.trim(), updated_at: new Date().toISOString() })
+      .eq("id", userId);
+    if (profileError) {
+      return json({ error: "Profile update failed: " + profileError.message }, 400);
     }
     await supabase.from("audit_logs").insert({
       actor_id: user.sub,
@@ -239,7 +248,7 @@ Deno.serve(async (req: Request) => {
       entity_type: "User",
       entity_id: userId,
       result: "success",
-      details: "Updated display_name for user " + userId,
+      details: "Updated display_name to '" + input.display_name.trim() + "' for user " + userId,
     });
     return json({ ok: true });
   }

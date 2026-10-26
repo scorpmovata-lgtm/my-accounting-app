@@ -55,8 +55,20 @@ function parseAmount(input: string): number {
   return parseInt(digits, 10);
 }
 
-export function TransactionFormDialog() {
-  const [open, setOpen] = useState(false);
+interface TransactionFormDialogProps {
+  // controlled mode: اگر ارائه شود، والد کنترل می‌کند (مثلاً از منوی پایین)
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+export function TransactionFormDialog({
+  open: controlledOpen,
+  onOpenChange,
+}: TransactionFormDialogProps = {}) {
+  // اگر controlled نباشد، uncontrolled با state داخلی
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const contacts = useAccountingStore((s) => s.contacts);
   const categories = useAccountingStore((s) => s.categories);
   const transactions = useAccountingStore((s) => s.transactions);

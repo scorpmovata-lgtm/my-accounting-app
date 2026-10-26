@@ -151,3 +151,8 @@
     font-feature-settings: "ss01" on;
   }
 }
+
+/* Safe area برای منوی پایین (روی گوشی‌های با notch) */
+.safe-area-pb {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}

@@ -27,8 +27,8 @@ import {
   CREATE_TRANSACTION_FN,
   DEPLOYMENT_STEPS,
   SCHEMA_SQL,
-  TELEGRAM_BOT_FN,
 } from "@/lib/deployment-artifacts";
+import { TELEGRAM_BOT_FN_V2 as TELEGRAM_BOT_FN } from "@/lib/telegram-bot-v2";
 import {
   SEED_DATA_SQL,
   ADMIN_USERS_FN,
@@ -120,7 +120,7 @@ export function SetupTab() {
               <Download className="h-5 w-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
               <div className="text-sm space-y-1">
                 <div className="font-medium text-emerald-800 dark:text-emerald-300">
-                  دانلود کد منبع کامل اپ (۲۶۶ کیلوبایت)
+                  دانلود کد منبع کامل اپ (۳۱۲ کیلوبایت — نسخه v1.4.1)
                 </div>
                 <p className="text-emerald-700/80 dark:text-emerald-400/80 text-xs">
                   این فایل .zip را دانلود کن، در پوشه پروژه‌ات extract کن، سپس به GitHub پوش کن. شامل: source code, آیکون‌ها, manifest, service worker, README, .env.example, .gitignore.
@@ -128,7 +128,7 @@ export function SetupTab() {
               </div>
             </div>
             <Button asChild className="shrink-0">
-              <a href="/my-accounting-app.zip" download>
+              <a href="/my-accounting-app.zip?v=14" download>
                 <Download className="h-4 w-4 ml-1" />
                 دانلود .zip
               </a>

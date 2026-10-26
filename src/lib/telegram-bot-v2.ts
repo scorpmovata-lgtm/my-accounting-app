@@ -127,6 +127,15 @@ Deno.serve(async (req: Request) => {
         if (cbChatId) await tg(cbChatId, "❌ حساب شما متصل نیست.", mainMenu());
         return json({ ok: true });
       }
+      // بررسی scope: فقط balance_only اجازه مشاهده تراکنش‌ها را ندارد
+      if (link.scope === "balance_only") {
+        if (cbChatId) await tg(cbChatId,
+          "⚠️ سطح دسترسی شما «فقط مانده» است و اجازه مشاهده تراکنش‌ها را ندارید.\\n" +
+          "برای مشاهده مانده: دکمه «📊 مانده من» را بزنید.",
+          mainMenu()
+        );
+        return json({ ok: true });
+      }
       const limit = cbData === "txns_all" ? 999 : parseInt(cbData.split("_")[1] ?? "10", 10);
       const { data: txns } = await cbSupabase
         .from("transactions")
@@ -142,7 +151,8 @@ Deno.serve(async (req: Request) => {
       }
       const currency = txList[0]?.currency || "IRT";
       const label = currency === "IRT" ? "تومان" : "ریال";
-      let msg = "📋 <b>تراکنش‌های شما</b> (" + (cbData === "txns_all" ? "همه" : String(limit)) + " مورد)\\n\\n";
+      // ترتیب: جدید به قدیم (اولین = جدیدترین)
+      let msg = "📋 <b>تراکنش‌های شما</b> (" + (cbData === "txns_all" ? "همه" : String(limit)) + " مورد — جدید به قدیم)\\n\\n";
       for (const t of txList) {
         const sign = (t.transaction_type === "RECEIVABLE_CHARGE" || t.transaction_type === "OPENING_RECEIVABLE" || t.transaction_type === "PAYABLE_CHARGE" || t.transaction_type === "OPENING_PAYABLE") ? "+" : "-";
         msg += sign + " " + fmt(t.amount) + " " + label + " | " + t.effective_at;
@@ -272,6 +282,17 @@ Deno.serve(async (req: Request) => {
       msg += "🟢 طلب از شما (به شما بدهکار است): <b>" + fmt(receivable) + "</b> " + label + "\\n";
       msg += "🔴 بدهی شما (به او بدهکارید): <b>" + fmt(payable) + "</b> " + label + "\\n";
       if (isTransactions) {
+        // بررسی scope: فقط balance_only اجازه مشاهده تراکنش‌ها را ندارد
+        if (link.scope === "balance_only") {
+          await tg(chatId,
+            "📊 <b>مانده شما</b>\\n\\n" +
+            "🟢 طلب از شما: <b>" + fmt(computeBalance(txns ?? []).receivable) + "</b> " + label + "\\n" +
+            "🔴 بدهی شما: <b>" + fmt(computeBalance(txns ?? []).payable) + "</b> " + label + "\\n\\n" +
+            "⚠️ سطح دسترسی شما «فقط مانده» است و اجازه مشاهده تراکنش‌ها را ندارید.",
+            mainMenu()
+          );
+          return json({ ok: true });
+        }
         msg += "\\nتعداد تراکنش مورد نظر را انتخاب کنید:";
         await tg(chatId, msg, txnCountKeyboard());
       } else {
