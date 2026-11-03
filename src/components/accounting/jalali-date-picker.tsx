@@ -8,17 +8,17 @@ import { cn } from "@/lib/utils";
 import {
   PERSIAN_MONTHS,
   PERSIAN_WEEKDAYS_SHORT,
-  formatJalaliLong,
-  fromJalaliToISO,
+  formatShamsiLong,
   getWeekdayShanbe,
   jalaliMonthLength,
+  parseShamsiString,
   toJalali,
   toPersianDigits,
 } from "@/lib/accounting/jalali";
 
 interface JalaliDatePickerProps {
-  value?: string; // ISO yyyy-mm-dd
-  onChange: (iso: string) => void;
+  value?: string; // رشته شمسی yyyy-mm-dd
+  onChange: (shamsi: string) => void;
   placeholder?: string;
 }
 
@@ -31,8 +31,8 @@ export function JalaliDatePicker({
   const today = toJalali(new Date());
   const [view, setView] = useState(() => {
     if (value) {
-      const v = toJalali(value);
-      return { jy: v.jy, jm: v.jm };
+      const v = parseShamsiString(value);
+      if (v) return { jy: v.jy, jm: v.jm };
     }
     return { jy: today.jy, jm: today.jm };
   });
@@ -48,8 +48,10 @@ export function JalaliDatePicker({
   }, [view]);
 
   function handleSelect(day: number) {
-    const iso = fromJalaliToISO(view.jy, view.jm, day);
-    onChange(iso);
+    const mm = String(view.jm).padStart(2, "0");
+    const dd = String(day).padStart(2, "0");
+    const shamsi = `${view.jy}-${mm}-${dd}`;
+    onChange(shamsi);
     setOpen(false);
   }
 
@@ -74,7 +76,7 @@ export function JalaliDatePicker({
     setView((v) => ({ ...v, jy: v.jy + 1 }));
   }
 
-  const selected = value ? toJalali(value) : null;
+  const selected = value ? parseShamsiString(value) : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -86,7 +88,7 @@ export function JalaliDatePicker({
         >
           <CalendarIcon className="ml-2 h-4 w-4 shrink-0" />
           {value ? (
-            formatJalaliLong(value)
+            formatShamsiLong(value)
           ) : (
             <span className="text-muted-foreground">{placeholder}</span>
           )}

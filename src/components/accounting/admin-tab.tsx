@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import {
+  ShieldCheck,
   Users,
-  Download,
-  Upload,
-  Trash2,
   UserPlus,
+  Pencil,
+  Trash2,
+  Contact as ContactIcon,
+  Link2,
+  Plus,
   Loader2,
+  KeyRound,
   CheckCircle2,
   AlertCircle,
-  Database,
-  Shield,
-  Pencil,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -21,11 +26,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,660 +54,962 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAccountingStore } from "@/store/accounting-store";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  adminListUsers,
-  adminCreateUser,
-  adminDeleteUser,
-  adminUpdateUser,
-  adminBackup,
-  adminRestore,
-  AdminUser,
-  BackupData,
-} from "@/lib/supabase/api";
-import { useAuthStore } from "@/store/auth-store";
+  ROLE_LABELS,
+  SCOPE_SHORT,
+  type UserScope,
+  type UserRole,
+} from "@/lib/accounting/types";
 import { useToast } from "@/hooks/use-toast";
-import { formatJalaliShort, toPersianDigits } from "@/lib/accounting/jalali";
+import { toPersianDigits } from "@/lib/accounting/jalali";
+import { AdminTelegramSection } from "./admin-telegram-section";
 
 export function AdminTab() {
-  const authUser = useAuthStore((s) => s.user);
-  const refresh = useAuthStore((s) => s.refresh);
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/60 dark:border-emerald-900/50 dark:bg-emerald-950/20 p-3 flex items-start gap-2">
+        <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+        <div className="text-sm text-emerald-800 dark:text-emerald-300">
+          پنل مدیریت — شما به‌عنوان ادمین، کاربران سامانه و طرف حساب‌های
+          متمرکز را ایجاد/ویرایش می‌کنید. طرف حساب‌ها برای همه کاربران یکسان
+          هستند و می‌توانند به یک کاربر سامانه لینک شوند.
+        </div>
+      </div>
+      <UsersSection />
+      <AdminTelegramSection />
+      <CounterpartiesSection />
+    </div>
+  );
+}
 
-  const { toast } = useToast();
+// ===========================================================================
+// بخش کاربران
+// ===========================================================================
 
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
+function UsersSection() {
+  const users = useAccountingStore((s) => s.users);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const counterparties = useAccountingStore((s) => s.counterparties);
 
-  // فرم ساخت کاربر جدید
-  const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [newDisplayName, setNewDisplayName] = useState("");
-  const [creatingUser, setCreatingUser] = useState(false);
-
-  // پشتیبان‌گیری
-  const [backingUp, setBackingUp] = useState(false);
-  const [restoring, setRestoring] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [pendingRestore, setPendingRestore] = useState<BackupData | null>(null);
-
-  // دیالوگ ویرایش نام نمایشی
-  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
-  const [editDisplayName, setEditDisplayName] = useState("");
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  async function loadUsers() {
-    setLoadingUsers(true);
-    try {
-      const list = await adminListUsers();
-      setUsers(list);
-    } finally {
-      setLoadingUsers(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadUsers();
-  }, []);
-
-  async function handleCreateUser() {
-    setCreatingUser(true);
-    try {
-      const result = await adminCreateUser({
-        email: newEmail.trim(),
-        password: newPassword,
-        displayName: newDisplayName.trim() || newEmail.trim(),
-      });
-      if (result.ok) {
-        toast({
-          title: "کاربر ساخته شد",
-          description: `حساب ${newEmail.trim()} ایجاد شد.`,
-        });
-        setNewEmail("");
-        setNewPassword("");
-        setNewDisplayName("");
-        await loadUsers();
-      } else {
-        toast({
-          title: "خطا در ساخت کاربر",
-          description: result.error ?? "خطای ناشناخته",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      setCreatingUser(false);
-    }
-  }
-
-  async function handleDeleteUser(userId: string, email: string | null) {
-    const ok = await adminDeleteUser(userId);
-    if (ok) {
-      toast({
-        title: "کاربر حذف شد",
-        description: email
-          ? `حساب ${email} حذف شد.`
-          : "کاربر حذف شد.",
-      });
-      await loadUsers();
-    } else {
-      toast({
-        title: "خطا در حذف کاربر",
-        description: "عملیات ناموفق بود. ممکن است ادمین نباشید یا اتصال قطع شده باشد.",
-        variant: "destructive",
-      });
-    }
-  }
-
-  function openEditDialog(u: AdminUser) {
-    setEditingUser(u);
-    setEditDisplayName(u.displayName ?? "");
-  }
-
-  async function handleUpdateDisplayName() {
-    if (!editingUser) return;
-    const name = editDisplayName.trim();
-    if (!name) {
-      toast({
-        title: "خطا",
-        description: "نام نمایشی نمی‌تواند خالی باشد.",
-        variant: "destructive",
-      });
-      return;
-    }
-    setSavingEdit(true);
-    try {
-      const result = await adminUpdateUser(editingUser.id, name);
-      if (result.ok) {
-        toast({
-          title: "نام نمایشی به‌روزرسانی شد",
-          description: `نام جدید: ${name}`,
-        });
-        setEditingUser(null);
-        await loadUsers();
-        // اگر کاربر فعلی را ویرایش کردیم، refresh کن تا auth store هم به‌روز شود
-        if (editingUser.id === authUser?.id) {
-          await refresh();
-        }
-      } else {
-        toast({
-          title: "خطا در به‌روزرسانی",
-          description: result.error ?? "خطای ناشناخته",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      setSavingEdit(false);
-    }
-  }
-
-  async function handleBackup() {
-    setBackingUp(true);
-    try {
-      const data = await adminBackup();
-      if (!data) {
-        toast({
-          title: "خطا در پشتیبان‌گیری",
-          description: "دریافت داده ناموفق بود.",
-          variant: "destructive",
-        });
-        return;
-      }
-      // دانلود به‌عنوان JSON
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const stamp = formatJalaliShort(new Date()).replace(/\//g, "-");
-      a.download = `accounting-backup-${stamp}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast({
-        title: "پشتیبان‌گیری انجام شد",
-        description: `فایل دانلود شد — ${toPersianDigits(
-          (data.transactions ?? []).length
-        )} تراکنش.`,
-      });
-    } finally {
-      setBackingUp(false);
-    }
-  }
-
-  function handleRestoreFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target?.result as string;
-        const parsed = JSON.parse(text);
-        if (!parsed.ledgers) {
-          toast({
-            title: "فایل نامعتبر",
-            description: "این فایل backup معتبر نیست (فیلد ledgers موجود نیست).",
-            variant: "destructive",
-          });
-          return;
-        }
-        setPendingRestore(parsed as BackupData);
-      } catch {
-        toast({
-          title: "خطا در خواندن فایل",
-          description: "فایل JSON معتبر نیست.",
-          variant: "destructive",
-        });
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  async function handleRestoreConfirm() {
-    if (!pendingRestore) return;
-    setRestoring(true);
-    try {
-      const result = await adminRestore(pendingRestore);
-      if (result.ok) {
-        toast({
-          title: "بازگردانی انجام شد",
-          description: "داده‌ها از فایل backup بازیابی شد.",
-        });
-        await refresh();
-      } else {
-        toast({
-          title: "خطا در بازگردانی",
-          description: result.error ?? "خطای ناشناخته",
-          variant: "destructive",
-        });
-      }
-    } finally {
-      setRestoring(false);
-      setPendingRestore(null);
-    }
+  // یافتن طرف حسابِ لینک‌شده به هر کاربر (ازطرف cp.linkedUserId)
+  function cpForUser(userId: string) {
+    return counterparties.find((c) => c.linkedUserId === userId);
   }
 
   return (
-    <div className="space-y-4">
-      {/* هشدار ادمین */}
-      <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
-        <CardContent className="p-4 sm:p-5">
-          <div className="flex items-start gap-3">
-            <Shield className="h-5 w-5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
-            <div className="text-sm space-y-1">
-              <div className="font-medium text-amber-800 dark:text-amber-300">
-                پنل مدیریت (ادمین)
-              </div>
-              <p className="text-muted-foreground leading-relaxed">
-                شما به‌عنوان صاحب دفتر به این پنل دسترسی دارید. اینجا می‌توانید
-                کاربران جدید بسازید، کاربران را حذف کنید، و از داده‌ها پشتیبان
-                بگیرید یا بازگردانی کنید.
-                {authUser?.displayName && (
-                  <>
-                    {" "}— کاربر فعال:{" "}
-                    <span className="font-medium">{authUser.displayName}</span>
-                  </>
-                )}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* مدیریت کاربران */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 flex-wrap">
-            <Users className="h-5 w-5" />
-            مدیریت کاربران
-            <Badge variant="secondary" className="mr-auto">
-              {toPersianDigits(users.length)} کاربر
-            </Badge>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={loadUsers}
-              disabled={loadingUsers}
-            >
-              {loadingUsers ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-4 w-4" />
-              )}
-              به‌روزرسانی
-            </Button>
-          </CardTitle>
-          <CardDescription>
-            ساخت حساب جدید برای اعضای دفتر و حذف حساب‌های غیرفعال.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* فهرست کاربران */}
-          <ScrollArea className="h-[280px] rounded-md border">
-            {users.length === 0 ? (
-              <div className="text-center text-sm text-muted-foreground py-8">
-                کاربری یافت نشد.
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {users.map((u) => (
-                  <li
-                    key={u.id}
-                    className="px-3 py-2.5 flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate">
-                        {u.displayName ?? "بدون نام"}
-                      </div>
-                      <div className="text-xs text-muted-foreground" dir="ltr">
-                        {u.email ?? "—"} •{" "}
-                        {u.emailConfirmed ? "تأیید ایمیل ✓" : "بدون تأیید ایمیل"}
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        عضو از {formatJalaliShort(u.createdAt)}
-                        {u.lastSignInAt && (
-                          <> • آخرین ورود: {formatJalaliShort(u.lastSignInAt)}</>
-                        )}
-                        {u.id === authUser?.id && (
-                          <Badge variant="secondary" className="mr-2 ml-1">
-                            شما
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    <div className="shrink-0 flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        title="ویرایش نام نمایشی"
-                        onClick={() => openEditDialog(u)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={u.id === authUser?.id}
-                            title={
-                              u.id === authUser?.id
-                                ? "نمی‌توانید خودتان را حذف کنید"
-                                : "حذف کاربر"
-                            }
-                          >
-                            <Trash2 className="h-4 w-4 text-rose-600" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>حذف کاربر</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              آیا مطمئنید می‌خواهید حساب{" "}
-                              <span dir="ltr" className="font-medium">
-                                {u.email ?? "بدون ایمیل"}
-                              </span>{" "}
-                              را حذف کنید؟ این عملیات غیرقابل بازگشت است و تمام
-                              داده‌های مرتبط (دفتر، تراکنش‌ها) نیز پاک می‌شود.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>انصراف</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-rose-600 hover:bg-rose-700 text-white"
-                              onClick={() => handleDeleteUser(u.id, u.email)}
-                            >
-                              بله، حذف کن
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </ScrollArea>
-
-          {/* فرم ساخت کاربر */}
-          <div className="rounded-md border p-3 bg-muted/20 space-y-3">
-            <div className="text-sm font-medium flex items-center gap-2">
-              <UserPlus className="h-4 w-4" />
-              ساخت کاربر جدید
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="new-email" className="text-xs">
-                  ایمیل
-                </Label>
-                <Input
-                  id="new-email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="user@example.com"
-                  dir="ltr"
-                  className="text-left"
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="new-pass" className="text-xs">
-                  رمز عبور (حداقل ۶ کاراکتر)
-                </Label>
-                <Input
-                  id="new-pass"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="••••••"
-                  dir="ltr"
-                  className="text-left"
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="new-name" className="text-xs">
-                  نام نمایشی
-                </Label>
-                <Input
-                  id="new-name"
-                  value={newDisplayName}
-                  onChange={(e) => setNewDisplayName(e.target.value)}
-                  placeholder="مثلاً: علی رضایی"
-                />
-              </div>
-            </div>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  disabled={
-                    creatingUser ||
-                    !newEmail.trim() ||
-                    !newPassword ||
-                    newPassword.length < 6
-                  }
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Users className="h-4 w-4 text-primary" />
+          کاربران سامانه
+          <Badge variant="secondary" className="mr-1 h-5">
+            {toPersianDigits(users.length.toString())} نفر
+          </Badge>
+        </CardTitle>
+        <CardDescription>
+          هر کاربر با نام کاربری و رمز عبور وارد می‌شود. ادمین دسترسی کامل،
+          کاربر عادی بر اساس سطح دسترسی محدود می‌شود.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ScrollArea className="max-h-96">
+          <ul className="divide-y">
+            {users.map((u) => {
+              const cp = cpForUser(u.id);
+              const isMe = u.id === currentUserId;
+              return (
+                <li
+                  key={u.id}
+                  className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40 transition-colors"
                 >
-                  {creatingUser ? (
-                    <Loader2 className="h-4 w-4 ml-1 animate-spin" />
-                  ) : (
-                    <UserPlus className="h-4 w-4 ml-1" />
-                  )}
-                  ساخت کاربر
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>تأیید ساخت کاربر</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    کاربر جدید با ایمیل{" "}
-                    <span dir="ltr" className="font-medium">
-                      {newEmail}
-                    </span>{" "}
-                    ساخته می‌شود. رمز به‌صورت تأییدشده ثبت می‌شود و کاربر می‌تواند
-                    بلافاصله وارد شود.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>انصراف</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleCreateUser}>
-                    بله، بساز
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        </CardContent>
-      </Card>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{u.displayName}</span>
+                      {u.role === "admin" ? (
+                        <Badge className="h-5 bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                          {ROLE_LABELS.admin}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="h-5">
+                          {ROLE_LABELS.user}
+                        </Badge>
+                      )}
+                      {u.role === "user" && u.scope && (
+                        <Badge variant="secondary" className="h-5 text-[10px]">
+                          {SCOPE_SHORT[u.scope]}
+                        </Badge>
+                      )}
+                      {isMe && (
+                        <Badge variant="secondary" className="h-5 text-[10px]">
+                          شما
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">
+                      <span className="font-mono" dir="ltr">
+                        {u.username}
+                      </span>
+                      {cp ? (
+                        <span className="flex items-center gap-0.5 text-emerald-700 dark:text-emerald-400">
+                          <Link2 className="h-3 w-3" />
+                          طرف حساب: {cp.displayName}
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400">
+                          بدون طرف حساب لینک‌شده
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <EditUserDialog user={u} disabled={isMe} />
+                    <DeleteUserDialog user={u} disabled={isMe} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </ScrollArea>
+        <div className="p-3 border-t">
+          <CreateUserDialog />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
-      {/* پشتیبان‌گیری و بازگردانی */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5" />
-            پشتیبان‌گیری و بازگردانی
-          </CardTitle>
-          <CardDescription>
-            از تمام داده‌های دفتر (دفترها، مخاطبین، سرفصل‌ها، تراکنش‌ها،
-            اتصال‌های تلگرام) به‌صورت یک فایل JSON پشتیبان بگیرید یا داده‌های
-            قبلی را بازگردانی کنید.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              onClick={handleBackup}
-              disabled={backingUp}
-              className="h-auto py-3 justify-start"
-            >
-              {backingUp ? (
-                <Loader2 className="h-5 w-5 ml-2 animate-spin shrink-0" />
-              ) : (
-                <Download className="h-5 w-5 ml-2 shrink-0" />
-              )}
-              <div className="flex flex-col items-start text-right">
-                <span className="font-medium">دانلود فایل پشتیبان</span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  export کامل به‌صورت JSON
-                </span>
-              </div>
-            </Button>
+function CreateUserDialog() {
+  const addUser = useAccountingStore((s) => s.addUser);
+  const addCounterparty = useAccountingStore((s) => s.addCounterparty);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const { toast } = useToast();
 
-            <div className="contents">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/json,.json"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleRestoreFile(f);
-                  // reset input value تا فایل یکسان دوباره قابل انتخاب باشد
-                  e.target.value = "";
-                }}
-              />
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={restoring}
-                className="h-auto py-3 justify-start"
-              >
-                <Upload className="h-5 w-5 ml-2 shrink-0" />
-                <div className="flex flex-col items-start text-right">
-                  <span className="font-medium">بازگردانی از فایل</span>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    انتخاب فایل JSON قبلی
-                  </span>
-                </div>
-              </Button>
-            </div>
-          </div>
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [role, setRole] = useState<UserRole>("user");
+  const [scope, setScope] = useState<UserScope>("transaction_list");
+  const [makeCounterparty, setMakeCounterparty] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
-          <div className="text-xs text-muted-foreground pt-2 border-t flex items-start gap-2">
-            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>
-              بازگردانی رکوردهای موجود را با همان ID جایگزین می‌کند (upsert) ولی
-              رکوردهایی که در فایل نیستند را پاک نمی‌کند. این عملیات در audit logs
-              ثبت می‌شود.
-            </span>
-          </div>
-        </CardContent>
-      </Card>
+  function reset() {
+    setUsername("");
+    setPassword("");
+    setDisplayName("");
+    setRole("user");
+    setScope("transaction_list");
+    setMakeCounterparty(true);
+    setSubmitting(false);
+  }
 
-      {/* دیالوگ ویرایش نام نمایشی */}
-      <Dialog
-        open={!!editingUser}
-        onOpenChange={(o) => {
-          if (!o) {
-            setEditingUser(null);
-            setEditDisplayName("");
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Pencil className="h-4 w-4" />
-              ویرایش نام نمایشی
-            </DialogTitle>
-            <DialogDescription>
-              {editingUser && (
-                <>
-                  نام نمایشی کاربر{" "}
-                  <span dir="ltr" className="font-medium">
-                    {editingUser.email ?? "—"}
-                  </span>{" "}
-                  را تغییر دهید. این نام در هدر و گزارش‌ها نمایش داده می‌شود.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-2 py-2">
-            <Label htmlFor="edit-name">نام نمایشی</Label>
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentUserId) return;
+    setSubmitting(true);
+    await new Promise((r) => setTimeout(r, 200));
+    const result = await addUser(
+      {
+        username,
+        password,
+        displayName,
+        role,
+        scope: role === "user" ? scope : undefined,
+      },
+      currentUserId
+    );
+    if (!result.ok || !result.user) {
+      setSubmitting(false);
+      toast({ title: "خطا", description: result.error, variant: "destructive" });
+      return;
+    }
+    // ایجاد طرف حساب هم‌نام و لینک (اگر خواسته شده)
+    if (makeCounterparty) {
+      const cpRes = await addCounterparty(
+        { displayName: displayName.trim(), linkedUserId: result.user.id },
+        currentUserId
+      );
+      if (!cpRes.ok) {
+        toast({
+          title: "کاربر ساخته شد ولی طرف حساب نه",
+          description: cpRes.error,
+          variant: "destructive",
+        });
+      }
+    }
+    setSubmitting(false);
+    setOpen(false);
+    reset();
+    toast({
+      title: "کاربر ایجاد شد",
+      description: `«${displayName}» با نام کاربری ${username} ساخته شد.`,
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
+      <DialogTrigger asChild>
+        <Button className="w-full">
+          <UserPlus className="h-4 w-4 ml-2" />
+          افزودن کاربر
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserPlus className="h-5 w-5 text-primary" />
+            افزودن کاربر جدید
+          </DialogTitle>
+          <DialogDescription>
+            نام کاربری و رمز عبور را تعیین کنید. کاربر با این اطلاعات وارد
+            می‌شود.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="nu-username">نام کاربری</Label>
             <Input
-              id="edit-name"
-              value={editDisplayName}
-              onChange={(e) => setEditDisplayName(e.target.value)}
-              placeholder="مثلاً: علی رضایی"
-              disabled={savingEdit}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !savingEdit) {
-                  void handleUpdateDisplayName();
-                }
-              }}
+              id="nu-username"
+              dir="ltr"
+              className="text-right"
+              placeholder="vahid"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={submitting}
+              required
+              minLength={3}
             />
           </div>
-          <DialogFooter>
+          <div className="space-y-2">
+            <Label htmlFor="nu-displayName">نام نمایشی</Label>
+            <Input
+              id="nu-displayName"
+              placeholder="وحید"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              disabled={submitting}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="nu-password">رمز عبور</Label>
+            <Input
+              id="nu-password"
+              dir="ltr"
+              className="text-right"
+              placeholder="••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={submitting}
+              required
+              minLength={4}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label>نقش</Label>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as UserRole)}
+                disabled={submitting}
+              >
+                <SelectTrigger className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">کاربر</SelectItem>
+                  <SelectItem value="admin">ادمین</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {role === "user" && (
+              <div className="space-y-2">
+                <Label>سطح دسترسی</Label>
+                <Select
+                  value={scope}
+                  onValueChange={(v) => setScope(v as UserScope)}
+                  disabled={submitting}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="balance_only">فقط مشاهده مانده</SelectItem>
+                    <SelectItem value="transaction_list">
+                      مانده + تراکنش‌ها
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
+            <div className="flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-emerald-600" />
+              <div>
+                <div className="text-sm font-medium">ایجاد طرف حساب هم‌نام</div>
+                <div className="text-[11px] text-muted-foreground">
+                  یک طرف حساب با همین نام بساز و به این کاربر لینک کن
+                </div>
+              </div>
+            </div>
+            <Switch
+              checked={makeCounterparty}
+              onCheckedChange={setMakeCounterparty}
+              disabled={submitting}
+            />
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
             <Button
+              type="button"
               variant="outline"
-              onClick={() => {
-                setEditingUser(null);
-                setEditDisplayName("");
-              }}
-              disabled={savingEdit}
+              className="w-full sm:w-auto"
+              onClick={() => setOpen(false)}
+              disabled={submitting}
             >
               انصراف
             </Button>
-            <Button
-              onClick={handleUpdateDisplayName}
-              disabled={savingEdit || !editDisplayName.trim()}
-            >
-              {savingEdit ? (
-                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+            <Button type="submit" className="w-full sm:w-auto" disabled={submitting}>
+              {submitting ? (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
               ) : (
-                <CheckCircle2 className="h-4 w-4 ml-1" />
+                <CheckCircle2 className="h-4 w-4 ml-2" />
+              )}
+              ایجاد کاربر
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditUserDialog({
+  user,
+  disabled,
+}: {
+  user: import("@/lib/accounting/types").User;
+  disabled?: boolean;
+}) {
+  const updateUser = useAccountingStore((s) => s.updateUser);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const { toast } = useToast();
+
+  const [open, setOpen] = useState(false);
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [password, setPassword] = useState("");
+  const [scope, setScope] = useState<UserScope>(
+    user.scope ?? "transaction_list"
+  );
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentUserId) return;
+    setSubmitting(true);
+    await new Promise((r) => setTimeout(r, 150));
+    const patch: Partial<
+      import("@/lib/accounting/types").User
+    > = {};
+    if (displayName.trim() && displayName !== user.displayName) {
+      patch.displayName = displayName.trim();
+    }
+    if (password) patch.password = password;
+    if (user.role === "user" && scope !== user.scope) patch.scope = scope;
+
+    if (Object.keys(patch).length === 0) {
+      toast({ title: "تغییری اعمال نشد", description: "هیچ فیلدی تغییر نکرده است." });
+      setSubmitting(false);
+      setOpen(false);
+      return;
+    }
+    const result = await updateUser(user.id, patch, currentUserId);
+    setSubmitting(false);
+    if (!result.ok) {
+      toast({ title: "خطا", description: result.error, variant: "destructive" });
+      return;
+    }
+    setOpen(false);
+    setPassword("");
+    toast({ title: "به‌روزرسانی شد", description: `«${user.displayName}» ویرایش شد.` });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          disabled={disabled}
+          title={disabled ? "نمی‌توانید خودتان را ویرایش کنید" : "ویرایش"}
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="h-5 w-5 text-primary" />
+            ویرایش کاربر «{user.displayName}»
+          </DialogTitle>
+          <DialogDescription>
+            نام کاربری قابل تغییر نیست. نام نمایشی، رمز عبور و سطح دسترسی را
+            به‌روز کنید.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-2">
+            <Label>نام نمایشی</Label>
+            <Input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              disabled={submitting}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>رمز عبور جدید (اختیاری)</Label>
+            <div className="relative">
+              <KeyRound className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                dir="ltr"
+                className="text-right pr-8"
+                placeholder="خالی = بدون تغییر"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+                minLength={4}
+              />
+            </div>
+          </div>
+          {user.role === "user" && (
+            <div className="space-y-2">
+              <Label>سطح دسترسی</Label>
+              <Select
+                value={scope}
+                onValueChange={(v) => setScope(v as UserScope)}
+                disabled={submitting}
+              >
+                <SelectTrigger className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="balance_only">فقط مشاهده مانده</SelectItem>
+                  <SelectItem value="transaction_list">
+                    مانده + تراکنش‌ها
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setOpen(false)}
+              disabled={submitting}
+            >
+              انصراف
+            </Button>
+            <Button type="submit" className="w-full sm:w-auto" disabled={submitting}>
+              {submitting ? (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 ml-2" />
               )}
               ذخیره
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-      {/* دیالوگ تأیید بازگردانی */}
-      <AlertDialog
-        open={!!pendingRestore}
-        onOpenChange={(o) => {
-          if (!o) setPendingRestore(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>تأیید بازگردانی</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingRestore && (
-                <>
-                  این فایل شامل:{" "}
-                  {toPersianDigits((pendingRestore.transactions ?? []).length)}{" "}
-                  تراکنش،{" "}
-                  {toPersianDigits((pendingRestore.contacts ?? []).length)}{" "}
-                  مخاطب،{" "}
-                  {toPersianDigits((pendingRestore.categories ?? []).length)}{" "}
-                  سرفصل است. تاریخ پشتیبان:{" "}
-                  {formatJalaliShort(pendingRestore.created_at ?? new Date().toISOString())}.
-                  ادامه می‌دهید؟
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>انصراف</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRestoreConfirm}
-              disabled={restoring}
+function DeleteUserDialog({
+  user,
+  disabled,
+}: {
+  user: import("@/lib/accounting/types").User;
+  disabled?: boolean;
+}) {
+  const deleteUser = useAccountingStore((s) => s.deleteUser);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  async function handleDelete() {
+    if (!currentUserId) return;
+    await deleteUser(user.id, currentUserId);
+    setOpen(false);
+    toast({
+      title: "کاربر حذف شد",
+      description: `«${user.displayName}» حذف شد.`,
+      variant: "destructive",
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+          disabled={disabled}
+          title={disabled ? "نمی‌توانید خودتان را حذف کنید" : "حذف"}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 text-rose-600" />
+            حذف کاربر «{user.displayName}»؟
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            این عملیات قابل بازگشت نیست. تراکنش‌های ثبت‌شده توسط این کاربر
+            حفظ می‌شوند. آیا مطمئن هستید؟
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>انصراف</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            className="bg-rose-600 hover:bg-rose-700"
+          >
+            حذف
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// ===========================================================================
+// بخش طرف حساب‌ها
+// ===========================================================================
+
+function CounterpartiesSection() {
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const users = useAccountingStore((s) => s.users);
+  const transactions = useAccountingStore((s) => s.transactions);
+
+  function userOf(cpId: string) {
+    return users.find((u) => {
+      const cp = counterparties.find((c) => c.id === cpId);
+      return cp?.linkedUserId === u.id;
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ContactIcon className="h-4 w-4 text-primary" />
+          طرف حساب‌ها (متمرکز)
+          <Badge variant="secondary" className="mr-1 h-5">
+            {toPersianDigits(counterparties.length.toString())} مورد
+          </Badge>
+        </CardTitle>
+        <CardDescription>
+          طرف حساب‌ها برای همه کاربران یکسان‌اند. می‌توانند به یک کاربر سامانه
+          لینک شوند (یعنی همان شخص است) — در این صورت تراکنش‌های دو طرف
+          خودکار تطبیق داده می‌شوند.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ScrollArea className="max-h-96">
+          <ul className="divide-y">
+            {counterparties.map((c) => {
+              const linkedUser = c.linkedUserId
+                ? users.find((u) => u.id === c.linkedUserId)
+                : null;
+              const txnCount = transactions.filter(
+                (t) => t.counterpartyId === c.id
+              ).length;
+              return (
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40 transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium">{c.displayName}</span>
+                      {linkedUser ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 gap-1 px-1.5 text-[10px] border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400"
+                        >
+                          <Link2 className="h-2.5 w-2.5" />
+                          {linkedUser.username}
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="h-5 text-[10px]">
+                          شخص عادی
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">
+                      {toPersianDigits(txnCount.toString())} تراکنش
+                      {c.notes ? ` — ${c.notes}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <EditCounterpartyDialog cp={c} />
+                    <DeleteCounterpartyDialog cp={c} txnCount={txnCount} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </ScrollArea>
+        <div className="p-3 border-t">
+          <CreateCounterpartyDialog />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CreateCounterpartyDialog() {
+  const addCounterparty = useAccountingStore((s) => s.addCounterparty);
+  const users = useAccountingStore((s) => s.users);
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const { toast } = useToast();
+
+  const [open, setOpen] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [notes, setNotes] = useState("");
+  const [linkedUserId, setLinkedUserId] = useState<string>("none");
+  const [submitting, setSubmitting] = useState(false);
+
+  // کاربرانی که هنوز به طرف حسابی لینک نشده‌اند
+  const linkableUsers = users.filter(
+    (u) => !counterparties.some((c) => c.linkedUserId === u.id)
+  );
+
+  function reset() {
+    setDisplayName("");
+    setNotes("");
+    setLinkedUserId("none");
+    setSubmitting(false);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentUserId) return;
+    setSubmitting(true);
+    await new Promise((r) => setTimeout(r, 150));
+    const result = await addCounterparty(
+      {
+        displayName,
+        notes: notes || undefined,
+        linkedUserId: linkedUserId === "none" ? null : linkedUserId,
+      },
+      currentUserId
+    );
+    setSubmitting(false);
+    if (!result.ok) {
+      toast({ title: "خطا", description: result.error, variant: "destructive" });
+      return;
+    }
+    setOpen(false);
+    reset();
+    toast({
+      title: "طرف حساب ایجاد شد",
+      description: `«${displayName}» افزوده شد.`,
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="w-full">
+          <Plus className="h-4 w-4 ml-2" />
+          افزودن طرف حساب
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ContactIcon className="h-5 w-5 text-primary" />
+            افزودن طرف حساب
+          </DialogTitle>
+          <DialogDescription>
+            طرف حساب‌ها متمرکز هستند و برای همه کاربران یکسان نمایش داده
+            می‌شوند.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="nc-name">نام طرف حساب</Label>
+            <Input
+              id="nc-name"
+              placeholder="مثلاً وحید یا رضا کریمی"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              disabled={submitting}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="nc-notes">یادداشت (اختیاری)</Label>
+            <Input
+              id="nc-notes"
+              placeholder="مثلاً شریک تجاری"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>لینک به کاربر سامانه (اختیاری)</Label>
+            <Select
+              value={linkedUserId}
+              onValueChange={setLinkedUserId}
+              disabled={submitting}
             >
-              {restoring ? (
-                <Loader2 className="h-4 w-4 ml-1 animate-spin" />
+              <SelectTrigger className="h-10">
+                <SelectValue placeholder="—" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">بدون لینک (شخص عادی)</SelectItem>
+                {linkableUsers.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.displayName} ({u.username})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {linkedUserId !== "none" && (
+              <div className="text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                <Link2 className="h-3 w-3" />
+                با لینک کردن، تراکنش‌های این طرف حساب با دفتر آن کاربر خودکار
+                تطبیق داده می‌شوند.
+              </div>
+            )}
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setOpen(false)}
+              disabled={submitting}
+            >
+              انصراف
+            </Button>
+            <Button type="submit" className="w-full sm:w-auto" disabled={submitting}>
+              {submitting ? (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
               ) : (
-                <CheckCircle2 className="h-4 w-4 ml-1" />
+                <CheckCircle2 className="h-4 w-4 ml-2" />
               )}
-              بله، بازگردانی کن
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+              افزودن
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditCounterpartyDialog({
+  cp,
+}: {
+  cp: import("@/lib/accounting/types").Counterparty;
+}) {
+  const updateCounterparty = useAccountingStore((s) => s.updateCounterparty);
+  const users = useAccountingStore((s) => s.users);
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const { toast } = useToast();
+
+  const [open, setOpen] = useState(false);
+  const [displayName, setDisplayName] = useState(cp.displayName);
+  const [notes, setNotes] = useState(cp.notes ?? "");
+  const [linkedUserId, setLinkedUserId] = useState<string>(
+    cp.linkedUserId ?? "none"
+  );
+  const [submitting, setSubmitting] = useState(false);
+
+  // قابل لینک: کاربرانی که هنوز لینک نشده‌اند، به‌علاوه کاربر فعلیِ این cp
+  const linkableUsers = users.filter(
+    (u) =>
+      u.id === cp.linkedUserId ||
+      !counterparties.some((c) => c.id !== cp.id && c.linkedUserId === u.id)
+  );
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentUserId) return;
+    setSubmitting(true);
+    await new Promise((r) => setTimeout(r, 150));
+    const result = await updateCounterparty(
+      cp.id,
+      {
+        displayName: displayName.trim(),
+        notes,
+        linkedUserId: linkedUserId === "none" ? null : linkedUserId,
+      },
+      currentUserId
+    );
+    setSubmitting(false);
+    if (!result.ok) {
+      toast({ title: "خطا", description: result.error, variant: "destructive" });
+      return;
+    }
+    setOpen(false);
+    toast({ title: "به‌روزرسانی شد", description: `«${cp.displayName}» ویرایش شد.` });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8" title="ویرایش">
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="h-5 w-5 text-primary" />
+            ویرایش طرف حساب «{cp.displayName}»
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-2">
+            <Label>نام</Label>
+            <Input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              disabled={submitting}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>یادداشت</Label>
+            <Input
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              disabled={submitting}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>لینک به کاربر</Label>
+            <Select
+              value={linkedUserId}
+              onValueChange={setLinkedUserId}
+              disabled={submitting}
+            >
+              <SelectTrigger className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">بدون لینک (شخص عادی)</SelectItem>
+                {linkableUsers.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.displayName} ({u.username})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setOpen(false)}
+              disabled={submitting}
+            >
+              انصراف
+            </Button>
+            <Button type="submit" className="w-full sm:w-auto" disabled={submitting}>
+              {submitting ? (
+                <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 ml-2" />
+              )}
+              ذخیره
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteCounterpartyDialog({
+  cp,
+  txnCount,
+}: {
+  cp: import("@/lib/accounting/types").Counterparty;
+  txnCount: number;
+}) {
+  const deleteCounterparty = useAccountingStore((s) => s.deleteCounterparty);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  async function handleDelete() {
+    if (!currentUserId) return;
+    if (txnCount > 0) {
+      toast({
+        title: "حذف ممکن نیست",
+        description: "این طرف حساب تراکنش ثبت‌شده دارد و قابل حذف نیست.",
+        variant: "destructive",
+      });
+      setOpen(false);
+      return;
+    }
+    await deleteCounterparty(cp.id, currentUserId);
+    setOpen(false);
+    toast({ title: "حذف شد", description: `«${cp.displayName}» حذف شد.` });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+          title="حذف"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 text-rose-600" />
+            حذف طرف حساب «{cp.displayName}»؟
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {txnCount > 0
+              ? "این طرف حساب تراکنش ثبت‌شده دارد و قابل حذف نیست. ابتدا تراکنش‌ها را حذف کنید."
+              : "این عملیات قابل بازگشت نیست. آیا مطمئن هستید؟"}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>انصراف</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            className="bg-rose-600 hover:bg-rose-700"
+            disabled={txnCount > 0}
+          >
+            حذف
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

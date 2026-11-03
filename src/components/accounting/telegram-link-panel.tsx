@@ -1,13 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+// ============================================================
+// تب تلگرام (کاربر عادی) — اتصال با کد ۶ رقمی که «ادمین» می‌دهد
+// کاربر کد را از ادمین می‌گیرد و در ربات می‌فرستد.
+// ============================================================
+
+import { useCallback, useEffect, useState } from "react";
 import {
   Send,
   Link2,
-  Clock,
-  ShieldCheck,
+  Link2Off,
+  RefreshCw,
+  Info,
+  ExternalLink,
   Loader2,
+  CheckCircle2,
+  XCircle,
+  ShieldCheck,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -15,363 +27,268 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAccountingStore } from "@/store/accounting-store";
-import { useAuthStore } from "@/store/auth-store";
-import {
-  TelegramAccessScope,
-  TELEGRAM_SCOPE_LABELS,
-  TRANSACTION_TYPE_LABELS,
-} from "@/lib/accounting/types";
-import {
-  formatAmount,
-  formatJalaliShort,
-  toPersianDigits,
-} from "@/lib/accounting/jalali";
-import { computeContactBalance } from "@/lib/accounting/engine";
 import { useToast } from "@/hooks/use-toast";
+import { getClient } from "@/lib/supabase/real";
+
+interface TgLink {
+  id: string;
+  telegram_user_id: number;
+  telegram_username: string | null;
+  status: string;
+  linked_at: string;
+}
 
 export function TelegramLinkPanel() {
-  const contacts = useAccountingStore((s) => s.contacts);
-  const telegramLinks = useAccountingStore((s) => s.telegramLinks);
-  const linkCodes = useAccountingStore((s) => s.linkCodes);
-  const transactions = useAccountingStore((s) => s.transactions);
-  const generateLinkCode = useAccountingStore((s) => s.generateLinkCode);
-  const revokeTelegramLink = useAccountingStore(
-    (s) => s.revokeTelegramLink
-  );
-
-  const authUser = useAuthStore((s) => s.user);
-  const authStatus = useAuthStore((s) => s.status);
+  const realMode = useAccountingStore((s) => s.realMode);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
   const { toast } = useToast();
 
-  const [scope, setScope] = useState<TelegramAccessScope>("balance_only");
-  const [busyContactId, setBusyContactId] = useState<string | null>(null);
+  const [link, setLink] = useState<TgLink | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [unlinking, setUnlinking] = useState(false);
 
-  const linkedCount = useMemo(
-    () =>
-      telegramLinks.filter((l) => l.status === "linked").length,
-    [telegramLinks]
-  );
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? "";
+  const botUrl = botUsername ? `https://t.me/${botUsername}` : null;
 
-  async function handleGenerate(contactId: string, displayName: string) {
-    setBusyContactId(contactId);
+  const refresh = useCallback(async () => {
+    const c = getClient();
+    if (!c || !currentUserId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const { data } = await c
+      .from("telegram_links")
+      .select("id, telegram_user_id, telegram_username, status, linked_at")
+      .eq("user_id", currentUserId)
+      .eq("status", "linked")
+      .maybeSingle();
+    setLink((data as TgLink) ?? null);
+    setLoading(false);
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (realMode) void refresh();
+    else setLoading(false);
+  }, [realMode, refresh]);
+
+  async function handleUnlink() {
+    const c = getClient();
+    if (!c || !link) return;
+    setUnlinking(true);
     try {
-      const result = await generateLinkCode(contactId, scope);
-      if (result) {
-        toast({
-          title: "کد اتصال تولید شد",
-          description: `کد ${toPersianDigits(
-            result.code
-          )} برای «${displayName}» تولید شد. این کد تا ۱۰ دقیقه معتبر است.`,
-        });
-      } else {
-        toast({
-          title: "خطا",
-          description:
-            "تولید کد ناموفق بود. در حالت واقعی اطمینان حاصل کنید به Supabase متصل هستید.",
-          variant: "destructive",
-        });
-      }
+      await c.from("telegram_links").delete().eq("id", link.id);
+      setLink(null);
+      toast({ title: "اتصال قطع شد", description: "برای اتصال مجدد، کد جدید از ادمین بگیرید." });
     } catch (e) {
       toast({
-        title: "خطا",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        title: "خطا در قطع اتصال",
+        description: e instanceof Error ? e.message : "دوباره تلاش کنید",
         variant: "destructive",
       });
     } finally {
-      setBusyContactId(null);
+      setUnlinking(false);
     }
   }
 
-  async function handleRevoke(linkId: string, displayName: string) {
-    setBusyContactId(linkId);
-    try {
-      await revokeTelegramLink(linkId);
-      toast({
-        title: "اتصال لغو شد",
-        description: `اتصال تلگرام «${displayName}» لغو شد.`,
-      });
-    } catch (e) {
-      toast({
-        title: "خطا",
-        description: e instanceof Error ? e.message : "خطای ناشناخته",
-        variant: "destructive",
-      });
-    } finally {
-      setBusyContactId(null);
-    }
+  // ===== حالت نمایشی (mock) =====
+  if (!realMode) {
+    return (
+      <div className="space-y-4">
+        <Card className="border-amber-200/70 dark:border-amber-900/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Send className="h-4 w-4 text-primary" />
+              ربات استعلام تلگرام
+            </CardTitle>
+            <CardDescription>
+              اتصال تلگرام به حساب و مشاهده مانده از داخل ربات
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 p-3 text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+              <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <p>
+                در حالت نمایشی (mock) ربات غیرفعال است. پس از دیپلوی روی
+                Supabase، ادمین برای شما کد اتصال ۶ رقمی می‌سازد و با ارسال آن
+                در ربات، مانده‌تان را در تلگرام می‌بینید.
+              </p>
+            </div>
+            <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1.5 text-muted-foreground leading-relaxed">
+              <p className="font-medium text-foreground">قابلیت‌های ربات:</p>
+              <p>📊 «مانده من» — کل طلب و بدهی شما + تفکیک طرف حساب‌ها</p>
+              <p>📋 «تراکنش‌ها» — فهرست تراکنش‌ها (۱۰ / ۳۰ / همه)</p>
+              <p>🔒 دسترسی شما کاملاً تحت کنترل ادمین سامانه است</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
+  // ===== حالت واقعی =====
   return (
     <div className="space-y-4">
-      {/* کارت اطلاعات صاحب دفتر */}
-      <Card className="border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 flex-wrap">
-            <ShieldCheck className="h-5 w-5 text-emerald-700 dark:text-emerald-400" />
-            صاحب دفتر (ادمین)
-            <Badge variant="secondary" className="mr-auto">
-              {linkedCount > 0
-                ? `${toPersianDigits(linkedCount)} اتصال فعال`
-                : "بدون اتصال"}
-            </Badge>
+      {/* وضعیت اتصال */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Send className="h-4 w-4 text-primary" />
+            ربات استعلام تلگرام
+          </CardTitle>
+          <CardDescription>
+            با اتصال تلگرام، مانده و تراکنش‌های خودتان را در ربات ببینید
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-3">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              در حال بررسی وضعیت...
+            </div>
+          ) : link ? (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+                    تلگرام متصل است
+                  </div>
+                  <div className="text-xs text-emerald-700 dark:text-emerald-400 font-mono" dir="ltr">
+                    {link.telegram_username ?? "بدون username"}
+                  </div>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-rose-600 hover:text-rose-700 shrink-0"
+                onClick={handleUnlink}
+                disabled={unlinking}
+              >
+                {unlinking ? (
+                  <Loader2 className="h-3.5 w-3.5 ml-1 animate-spin" />
+                ) : (
+                  <Link2Off className="h-3.5 w-3.5 ml-1" />
+                )}
+                قطع اتصال
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2.5 rounded-lg border bg-muted/30 p-3">
+              <XCircle className="h-5 w-5 text-muted-foreground shrink-0" />
+              <div className="text-sm text-muted-foreground">
+                هنوز متصل نشده‌اید — کد ۶ رقمی را از ادمین بگیرید و در ربات بفرستید
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* دریافت کد از ادمین */}
+      {!link && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              گام ۱ — دریافت کد اتصال از ادمین
+            </CardTitle>
+            <CardDescription>
+              ساخت کد فقط توسط ادمین سامانه انجام می‌شود
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-lg border bg-muted/30 p-3 text-sm leading-relaxed text-muted-foreground space-y-2">
+              <p>
+                از ادمین سامانه (در منوی «مدیریت» ← بخش «اتصال تلگرام کاربران»)
+                درخواست <span className="font-medium text-foreground">کد اتصال ۶ رقمی</span> کنید.
+              </p>
+              <p>
+                کد ۱۵ دقیقه اعتبار دارد و فقط یک‌بار مصرف است — به‌محض دریافت،
+                آن را در ربات بفرستید.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ارسال به ربات */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Link2 className="h-4 w-4 text-primary" />
+            گام ۲ — ارسال کد در ربات
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <div className="rounded-md border bg-card p-2">
-              <div className="text-xs text-muted-foreground">نام</div>
-              <div className="font-medium">
-                {authStatus === "authenticated" && authUser
-                  ? authUser.displayName ?? "نامشخص"
-                  : "میهمان"}
-              </div>
-            </div>
-            <div className="rounded-md border bg-card p-2">
-              <div className="text-xs text-muted-foreground">ایمیل</div>
-              <div className="font-medium truncate" dir="ltr">
-                {authStatus === "authenticated" && authUser
-                  ? authUser.email ?? "—"
-                  : "—"}
-              </div>
-            </div>
-            <div className="rounded-md border bg-card p-2">
-              <div className="text-xs text-muted-foreground">تعداد اتصال‌ها</div>
-              <div className="font-medium persian-nums">
-                {toPersianDigits(linkedCount)} کاربر متصل
-              </div>
-            </div>
+        <CardContent className="space-y-3">
+          <ol className="text-sm space-y-2 text-muted-foreground leading-relaxed list-decimal list-inside">
+            <li>
+              ربات را در تلگرام باز کنید
+              {botUrl ? (
+                <a
+                  href={botUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline mx-1"
+                >
+                  @{botUsername}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                <span className="mx-1">(آدرس ربات را ادمین اعلام می‌کند)</span>
+              )}
+              و دکمه Start را بزنید
+            </li>
+            <li>
+              کد ۶ رقمی را بفرستید یا دستور{" "}
+              <code dir="ltr" className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs">
+                /link کد
+              </code>{" "}
+              را بزنید
+            </li>
+            <li>پیام «✅ اتصال موفق» را دریافت کنید و دکمه «📊 مانده من» را بزنید</li>
+          </ol>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => void refresh()}>
+              <RefreshCw className="h-3.5 w-3.5 ml-1" />
+              بررسی وضعیت اتصال
+            </Button>
           </div>
         </CardContent>
       </Card>
 
+      {/* راهنمای دستورهای ربات */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Send className="h-5 w-5" />
-            اتصال تلگرام
-          </CardTitle>
-          <CardDescription>
-            طرف حساب‌هایی که اپ ندارند می‌توانند با ربات تلگرام مانده خود را
-            ببینند. صاحب دفتر کد یک‌بارمصرف تولید می‌کند و به آن‌ها می‌دهد. کد
-            ۱۰ دقیقه اعتبار دارد.
-          </CardDescription>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">دستورهای ربات</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <ShieldCheck className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-sm shrink-0">سطح دسترسی پیش‌فرض:</span>
-            <Select
-              value={scope}
-              onValueChange={(v) => setScope(v as TelegramAccessScope)}
-            >
-              <SelectTrigger className="w-[200px] h-8 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(
-                  Object.entries(TELEGRAM_SCOPE_LABELS) as [
-                    TelegramAccessScope,
-                    string
-                  ][]
-                ).map(([v, l]) => (
-                  <SelectItem key={v} value={v}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <CardContent>
+          <div className="grid gap-2 text-xs">
+            {[
+              { cmd: "📊 مانده من", desc: "کل طلب و بدهی + تفکیک طرف حساب‌ها" },
+              { cmd: "📋 تراکنش‌ها", desc: "فهرست تراکنش‌ها (۱۰ / ۳۰ / همه)" },
+              { cmd: "🔗 اتصال با کد", desc: "راهنمای اتصال" },
+              { cmd: "/help", desc: "راهنمای کامل" },
+            ].map((r) => (
+              <div
+                key={r.cmd}
+                className="flex items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2"
+              >
+                <span className="font-medium">{r.cmd}</span>
+                <span className="text-muted-foreground text-left">{r.desc}</span>
+              </div>
+            ))}
           </div>
-
-          <div>
-            <h4 className="text-sm font-medium mb-2">
-              کدهای فعال (تازه تولیدشده)
-            </h4>
-            <ScrollArea className="h-[160px]">
-              {linkCodes.length === 0 ? (
-                <div className="text-sm text-muted-foreground text-center py-4">
-                  کد فعالی وجود ندارد. برای تولید، در فهرست پایین روی «تولید کد»
-                  بزنید.
-                </div>
-              ) : (
-                <ul className="space-y-2">
-                  {linkCodes.slice(0, 6).map((lc) => {
-                    const contact = contacts.find(
-                      (c) => c.id === lc.contactId
-                    );
-                    return (
-                      <li
-                        key={`${lc.code}-${lc.createdAt}`}
-                        className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50"
-                      >
-                        <div className="min-w-0">
-                          <div
-                            className="font-mono text-lg font-bold tracking-widest"
-                            dir="ltr"
-                          >
-                            {toPersianDigits(lc.code)}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {contact?.displayName} •{" "}
-                            {TELEGRAM_SCOPE_LABELS[lc.scope]}
-                          </div>
-                        </div>
-                        <div className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
-                          <Clock className="h-3 w-3" />
-                          انقضا: {formatJalaliShort(lc.expiresAt)}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </ScrollArea>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-medium mb-2">
-              طرف حساب‌ها و مانده‌ها
-            </h4>
-            <ScrollArea className="h-[420px]">
-              <ul className="divide-y divide-border">
-                {contacts.map((c) => {
-                  const link = telegramLinks.find(
-                    (l) => l.contactId === c.id && l.status === "linked"
-                  );
-                  // محاسبه مانده فعلی مخاطب
-                  const balance = computeContactBalance(c.id, transactions);
-                  // ۵ تراکنش اخیر این مخاطب
-                  const recentTxns = transactions
-                    .filter((t) => t.contactId === c.id)
-                    .slice(0, 5);
-                  const isBusy = busyContactId === c.id || busyContactId === link?.id;
-                  return (
-                    <li
-                      key={c.id}
-                      className="py-3 flex flex-col gap-2"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-sm">
-                              {c.displayName}
-                            </span>
-                            {link ? (
-                              <Badge
-                                variant="outline"
-                                className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 text-xs"
-                              >
-                                <Link2 className="h-3 w-3 ml-1" />
-                                متصل
-                              </Badge>
-                            ) : (
-                              <Badge
-                                variant="outline"
-                                className="bg-muted text-muted-foreground text-xs"
-                              >
-                                متصل نیست
-                              </Badge>
-                            )}
-                          </div>
-                          {link && (
-                            <div className="text-xs text-muted-foreground mt-0.5" dir="ltr">
-                              {link.telegramUsername ?? link.telegramUserId}
-                              {" • "}
-                              {TELEGRAM_SCOPE_LABELS[link.scope]}
-                            </div>
-                          )}
-                        </div>
-                        <div className="shrink-0">
-                          {link ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isBusy}
-                              onClick={() => handleRevoke(link.id, c.displayName)}
-                            >
-                              {isBusy ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : null}
-                              لغو اتصال
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isBusy}
-                              onClick={() => handleGenerate(c.id, c.displayName)}
-                            >
-                              {isBusy ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : null}
-                              تولید کد
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      {/* مانده فعلی */}
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        <span
-                          className={
-                            balance.outstandingReceivable > 0
-                              ? "px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                              : "px-2 py-1 rounded-md bg-muted text-muted-foreground"
-                          }
-                        >
-                          طلب: {formatAmount(balance.outstandingReceivable)}
-                        </span>
-                        <span
-                          className={
-                            balance.outstandingPayable > 0
-                              ? "px-2 py-1 rounded-md bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-                              : "px-2 py-1 rounded-md bg-muted text-muted-foreground"
-                          }
-                        >
-                          بدهی: {formatAmount(balance.outstandingPayable)}
-                        </span>
-                        <span className="px-2 py-1 rounded-md bg-muted text-muted-foreground">
-                          {toPersianDigits(balance.transactionCount)} تراکنش
-                        </span>
-                      </div>
-                      {/* ۵ تراکنش اخیر */}
-                      {recentTxns.length > 0 && (
-                        <ul className="space-y-1 mt-1 pr-2 border-r-2 border-muted">
-                          {recentTxns.map((t) => (
-                            <li
-                              key={t.id}
-                              className="text-xs text-muted-foreground flex justify-between gap-2"
-                            >
-                              <span className="truncate">
-                                {TRANSACTION_TYPE_LABELS[t.transactionType]}
-                                {t.description ? ` • ${t.description}` : ""}
-                              </span>
-                              <span dir="ltr" className="shrink-0">
-                                {formatJalaliShort(t.effectiveAt)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </ScrollArea>
-          </div>
-
-          <div className="text-xs text-muted-foreground pt-3 border-t">
-            نکته امنیتی: نام کاربری تلگرام به‌تنهایی مجوز دسترسی نیست. اتصال
-            باید با کد یک‌بارمصرف و با تأیید صاحب دفتر انجام شود.
+          <div className="mt-3 flex items-start gap-2 text-xs text-muted-foreground leading-relaxed">
+            <Badge variant="outline" className="shrink-0">
+              دسترسی
+            </Badge>
+            <p>
+              ربات دقیقاً همان سطح دسترسی شما در اپ را رعایت می‌کند: اگر
+              «فقط مانده» باشید، تراکنش‌ها نمایش داده نمی‌شوند. ادمین نیز
+              می‌تواند دسترسی تلگرام شما را قطع کند.
+            </p>
           </div>
         </CardContent>
       </Card>

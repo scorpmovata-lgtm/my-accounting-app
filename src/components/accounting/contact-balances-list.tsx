@@ -1,124 +1,139 @@
 "use client";
 
-import { Users } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Link2, Users, ArrowLeftRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ContactBalance } from "@/lib/accounting/engine";
-import { Contact } from "@/lib/accounting/types";
-import { formatAmount } from "@/lib/accounting/jalali";
-import { cn } from "@/lib/utils";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { useAccountingStore } from "@/store/accounting-store";
+import { computeLedgerBalance } from "@/lib/accounting/engine";
+import { formatAmount, toPersianDigits } from "@/lib/accounting/jalali";
 
-interface ContactBalancesListProps {
-  contacts: Contact[];
-  balances: ContactBalance[];
-  onSelectContact?: (contactId: string) => void;
-  selectedContactId?: string | null;
-}
+export function ContactBalancesList() {
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const transactions = useAccountingStore((s) => s.transactions);
+  const counterparties = useAccountingStore((s) => s.counterparties);
 
-export function ContactBalancesList({
-  contacts,
-  balances,
-  onSelectContact,
-  selectedContactId,
-}: ContactBalancesListProps) {
-  // مرتب‌سازی بر اساس بزرگ‌ترین مانده (طلب + بدهی)
-  const sortedBalances = [...balances].sort((a, b) => {
-    const aMax = Math.max(a.outstandingReceivable, a.outstandingPayable);
-    const bMax = Math.max(b.outstandingReceivable, b.outstandingPayable);
-    return bMax - aMax;
-  });
+  if (!currentUserId) return null;
+
+  const balance = computeLedgerBalance(
+    currentUserId,
+    transactions,
+    counterparties
+  );
+
+  // مرتب‌سازی: طلب‌ها (بزرگ‌تر اول)، سپس بدهی‌ها، سپس تسویه
+  const rows = balance.byContact
+    .slice()
+    .sort((a, b) => {
+      // طلب‌ها اول (net < 0 = receivable)، بعد بدهی‌ها (net > 0)، بعد تسویه
+      const aType = a.net < 0 ? 0 : a.net > 0 ? 1 : 2;
+      const bType = b.net < 0 ? 0 : b.net > 0 ? 1 : 2;
+      if (aType !== bType) return aType - bType;
+      // داخل هر دسته، مبلغ بیشتر اول
+      return Math.abs(b.net) - Math.abs(a.net);
+    });
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <Users className="h-4 w-4" />
-          طرف حساب‌ها
-          <Badge variant="secondary" className="mr-auto">
-            {toFaCount(sortedBalances.length)} نفر
+          <Users className="h-4 w-4 text-primary" />
+          مانده طرف حساب‌ها
+          <Badge variant="secondary" className="mr-1 h-5">
+            {toPersianDigits(rows.length.toString())} نفر
           </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-[360px] px-2">
-          {sortedBalances.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground py-8">
-              هنوز طرف حسابی ثبت نشده است.
-            </div>
-          ) : (
-            <ul className="divide-y divide-border">
-              {sortedBalances.map((b) => {
-                const contact = contacts.find((c) => c.id === b.contactId);
-                if (!contact) return null;
-                const hasReceivable = b.outstandingReceivable > 0;
-                const hasPayable = b.outstandingPayable > 0;
-                const isSelected = selectedContactId === contact.id;
+        {rows.length === 0 ? (
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            هنوز تراکنشی ثبت نشده است.
+          </div>
+        ) : (
+          <ScrollArea className="max-h-96">
+            <ul className="divide-y">
+              {rows.map((c) => {
+                const cp = counterparties.find((x) => x.id === c.counterpartyId);
+                if (!cp) return null;
+                const isReceivable = c.net < 0; // طلب
+                const isPayable = c.net > 0; // بدهی
                 return (
-                  <li key={b.contactId}>
-                    <button
-                      type="button"
-                      onClick={() => onSelectContact?.(contact.id)}
-                      className={cn(
-                        "w-full text-right px-3 py-3 hover:bg-accent/50 transition-colors flex flex-col gap-2",
-                        isSelected && "bg-accent/70"
-                      )}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-medium truncate">
-                            {contact.displayName}
+                  <li
+                    key={c.counterpartyId}
+                    className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40 transition-colors"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium truncate">
+                          {cp.displayName}
+                        </span>
+                        {cp.linkedUserId && (
+                          <Badge
+                            variant="outline"
+                            className="h-5 gap-1 px-1.5 text-[10px] border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400"
+                          >
+                            <Link2 className="h-2.5 w-2.5" />
+                            {cp.linkedUsername}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-2">
+                        <span className="flex items-center gap-0.5">
+                          <ArrowLeftRight className="h-3 w-3" />
+                          {toPersianDigits(c.transactionCount.toString())} تراکنش
+                        </span>
+                        {cp.notes && (
+                          <span className="truncate">— {cp.notes}</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-left shrink-0">
+                      {isReceivable ? (
+                        <div className="flex flex-col items-end">
+                          <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                            طلب باز
                           </span>
-                          {contact.linkedTelegramId && (
-                            <Badge
-                              variant="outline"
-                              className="shrink-0 text-xs"
-                            >
-                              تلگرام متصل
-                            </Badge>
-                          )}
+                          <span
+                            className="font-bold text-emerald-700 dark:text-emerald-300"
+                            dir="ltr"
+                          >
+                            {toPersianDigits(
+                              Math.abs(c.net).toLocaleString("en-US")
+                            )}
+                          </span>
                         </div>
-                        <span className="text-xs text-muted-foreground shrink-0">
-                          {toFaCount(b.transactionCount)} تراکنش
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-2 text-sm">
-                        <span
-                          className={cn(
-                            "px-2 py-1 rounded-md",
-                            hasReceivable
-                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                              : "bg-muted text-muted-foreground"
-                          )}
-                        >
-                          طلب: {formatAmount(b.outstandingReceivable)}
-                        </span>
-                        <span
-                          className={cn(
-                            "px-2 py-1 rounded-md",
-                            hasPayable
-                              ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-                              : "bg-muted text-muted-foreground"
-                          )}
-                        >
-                          بدهی: {formatAmount(b.outstandingPayable)}
-                        </span>
-                      </div>
-                    </button>
+                      ) : isPayable ? (
+                        <div className="flex flex-col items-end">
+                          <span className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+                            بدهی باز
+                          </span>
+                          <span
+                            className="font-bold text-rose-700 dark:text-rose-300"
+                            dir="ltr"
+                          >
+                            {toPersianDigits(
+                              Math.abs(c.net).toLocaleString("en-US")
+                            )}
+                          </span>
+                        </div>
+                      ) : (
+                        <Badge variant="secondary" className="h-6">
+                          تسویه
+                        </Badge>
+                      )}
+                    </div>
                   </li>
                 );
               })}
             </ul>
-          )}
-        </ScrollArea>
+          </ScrollArea>
+        )}
       </CardContent>
     </Card>
-  );
-}
-
-// کمکی: تبدیل عدد به شمارش فارسی
-function toFaCount(n: number): string {
-  return String(n).replace(/\d/g, (d) =>
-    "۰۱۲۳۴۵۶۷۸۹"[parseInt(d, 10)]
   );
 }

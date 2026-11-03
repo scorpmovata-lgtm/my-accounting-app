@@ -1,189 +1,175 @@
-// Edge Function: admin-users
-// مدیریت کاربران — فقط admin (صاحب دفتر) می‌تواند استفاده کند
-// مسیر: supabase/functions/admin-users/index.ts
-// دیپلوی: supabase functions deploy admin-users --no-verify-jwt
+// supabase/functions/admin-users/index.ts
+// مدیریت کاربران توسط ادمین: GET (لیست) / POST (ایجاد) / PUT (ویرایش) / DELETE (حذف)
+// Deploy: supabase functions deploy admin-users
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-
-const corsHeaders = {
+const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function json(data: unknown, status = 200) {
+function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...cors, "Content-Type": "application/json" },
   });
 }
 
-function extractUser(jwt: string): { sub: string } | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length !== 3) return null;
-    let payload = parts[1];
-    payload = payload.replace(/-/g, "+").replace(/_/g, "/");
-    while (payload.length % 4) payload += "=";
-    const data = JSON.parse(atob(payload));
-    if (!data.sub) return null;
-    if (data.exp && data.exp < Date.now() / 1000) return null;
-    return { sub: String(data.sub) };
-  } catch (e) {
-    console.error("extractUser error:", e);
-    return null;
-  }
+async function actorName(admin, id) {
+  const { data } = await admin.from("user_profiles").select("display_name").eq("id", id).maybeSingle();
+  return data?.display_name || "—";
 }
 
-async function checkAdmin(supabase: any, userId: string): Promise<boolean> {
-  const { data } = await supabase
-    .from("ledgers")
-    .select("id")
-    .eq("owner_user_id", userId)
-    .is("archived_at", null)
-    .maybeSingle();
-  return data !== null;
+async function requireAdmin(req) {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const userClient = createClient(
+    Deno.env.get("SUPABASE_URL"),
+    Deno.env.get("SUPABASE_ANON_KEY"),
+    { global: { headers: { Authorization: authHeader } } }
+  );
+  const { data: { user } } = await userClient.auth.getUser();
+  if (!user) return { error: json({ error: "احراز هویت نشده" }, 401) };
+  const admin = createClient(
+    Deno.env.get("SUPABASE_URL"),
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+  );
+  const { data: prof } = await admin
+    .from("user_profiles").select("role").eq("id", user.id).maybeSingle();
+  if (!prof || prof.role !== "admin")
+    return { error: json({ error: "فقط ادمین دسترسی دارد" }, 403) };
+  return { user, admin };
 }
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  const auth = await requireAdmin(req);
+  if (auth.error) return auth.error;
+  const { user: actor, admin } = auth;
 
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-  const jwt = authHeader.replace("Bearer ", "");
-  const user = extractUser(jwt);
-  if (!user) {
-    return json({ error: "Invalid token" }, 401);
-  }
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-
-  const isAdmin = await checkAdmin(supabase, user.sub);
-  if (!isAdmin) {
-    return json({ error: "Forbidden - admin only" }, 403);
-  }
-
-  // GET: لیست همه کاربران
+  // GET → لیست کاربران
   if (req.method === "GET") {
-    const { data, error } = await supabase.auth.admin.listUsers();
-    if (error) {
-      return json({ error: error.message }, 500);
-    }
-    const users = (data.users ?? []).map((u: any) => ({
-      id: u.id,
-      email: u.email,
-      created_at: u.created_at,
-      last_sign_in_at: u.last_sign_in_at,
-      email_confirmed: u.email_confirmed_at != null,
-      display_name: u.user_metadata?.display_name ?? null,
-    }));
-    return json({ users });
+    const { data, error } = await admin.from("user_profiles").select("*").order("created_at");
+    if (error) return json({ error: error.message }, 500);
+    return json({ users: data });
   }
 
-  // POST: ساخت کاربر جدید
+  // POST → ایجاد کاربر
   if (req.method === "POST") {
-    let input: { email: string; password: string; display_name?: string };
-    try {
-      input = await req.json();
-    } catch {
-      return json({ error: "Invalid JSON" }, 400);
-    }
-    if (!input.email || !input.password) {
-      return json({ error: "email and password required" }, 400);
-    }
-    if (input.password.length < 6) {
-      return json({ error: "password must be at least 6 characters" }, 400);
-    }
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: input.email,
-      password: input.password,
+    const b = await req.json();
+    const username = (b.username || "").trim().toLowerCase();
+    const password = b.password;
+    const displayName = (b.displayName || "").trim();
+    const role = b.role || "user";
+    const scope = b.scope || null;
+    const makeCounterparty = b.makeCounterparty !== false;
+
+    if (!username || username.length < 3)
+      return json({ error: "نام کاربری حداقل ۳ نویسه" }, 400);
+    if (!password || password.length < 4)
+      return json({ error: "رمز حداقل ۴ نویسه" }, 400);
+    if (!displayName) return json({ error: "نام نمایشی الزامی" }, 400);
+    if (role === "user" && !scope)
+      return json({ error: "سطح دسترسی برای کاربر عادی الزامی" }, 400);
+
+    // یکتایی username
+    const { data: dup } = await admin
+      .from("user_profiles").select("id").eq("username", username).maybeSingle();
+    if (dup) return json({ error: "نام کاربری قبلاً گرفته شده" }, 400);
+
+    // ساخت کاربر در auth.users با email ساختگی
+    const email = username + "@accounting.local";
+    const { data: newUser, error: authErr } = await admin.auth.admin.createUser({
+      email,
+      password,
       email_confirm: true,
-      user_metadata: { display_name: input.display_name ?? input.email },
     });
-    if (error) {
-      return json({ error: error.message }, 400);
+    if (authErr) return json({ error: authErr.message }, 500);
+
+    // درج پروفایل
+    const { error: profErr } = await admin.from("user_profiles").insert({
+      id: newUser.user.id,
+      username,
+      display_name: displayName,
+      role,
+      scope: role === "user" ? scope : null,
+    });
+    if (profErr) return json({ error: profErr.message }, 500);
+
+    // ایجاد طرف حساب هم‌نام و لینک (اگر خواسته شده)
+    if (makeCounterparty) {
+      const { data: cp } = await admin.from("counterparties").insert({
+        display_name: displayName,
+        linked_user_id: newUser.user.id,
+        linked_username: username,
+        created_by: actor.id,
+      }).select().single();
+      if (cp) {
+        await admin.from("user_profiles").update({ linked_counterparty_id: cp.id })
+          .eq("id", newUser.user.id);
+      }
     }
-    await supabase.from("audit_logs").insert({
-      actor_id: user.sub,
-      action: "ADMIN_CREATE_USER",
+
+    await admin.from("audit_logs").insert({
+      actor_id: actor.id,
+      actor_name: await actorName(admin, actor.id),
+      action: "ADD_USER",
       entity_type: "User",
-      entity_id: data.user.id,
+      entity_id: newUser.user.id,
       result: "success",
-      details: "Created user " + input.email,
+      details: "افزودن کاربر " + displayName + " (" + username + ")",
     });
-    return json({
-      ok: true,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        display_name: input.display_name ?? input.email,
-      },
-    });
+    return json({ ok: true, userId: newUser.user.id });
   }
 
-  // DELETE: حذف کاربر
-  if (req.method === "DELETE") {
-    const url = new URL(req.url);
-    const userId = url.searchParams.get("id");
-    if (!userId) {
-      return json({ error: "id query param required" }, 400);
-    }
-    if (userId === user.sub) {
-      return json({ error: "Cannot delete yourself" }, 400);
-    }
-    const { error } = await supabase.auth.admin.deleteUser(userId);
-    if (error) {
-      return json({ error: error.message }, 400);
-    }
-    await supabase.from("audit_logs").insert({
-      actor_id: user.sub,
-      action: "ADMIN_DELETE_USER",
-      entity_type: "User",
-      entity_id: userId,
-      result: "success",
-      details: "Deleted user " + userId,
-    });
-    return json({ ok: true });
-  }
-
-  // PUT: به‌روزرسانی display_name کاربر
+  // PUT → ویرایش
   if (req.method === "PUT") {
     const url = new URL(req.url);
-    const userId = url.searchParams.get("id");
-    if (!userId) {
-      return json({ error: "id query param required" }, 400);
+    const id = url.searchParams.get("id");
+    if (!id) return json({ error: "id الزامی" }, 400);
+    const b = await req.json();
+    const patch = {};
+    if (b.displayName) patch.display_name = b.displayName.trim();
+    if (b.scope) patch.scope = b.scope;
+    if (Object.keys(patch).length) {
+      const { error } = await admin.from("user_profiles").update(patch).eq("id", id);
+      if (error) return json({ error: error.message }, 500);
     }
-    let input: { display_name?: string };
-    try {
-      input = await req.json();
-    } catch {
-      return json({ error: "Invalid JSON" }, 400);
+    if (b.password) {
+      const { error: pwErr } = await admin.auth.admin.updateUserById(id, { password: b.password });
+      if (pwErr) return json({ error: pwErr.message }, 500);
     }
-    if (!input.display_name || !input.display_name.trim()) {
-      return json({ error: "display_name required" }, 400);
-    }
-    const { error } = await supabase.auth.admin.updateUserById(userId, {
-      user_metadata: { display_name: input.display_name.trim() },
-    });
-    if (error) {
-      return json({ error: error.message }, 400);
-    }
-    await supabase.from("audit_logs").insert({
-      actor_id: user.sub,
-      action: "ADMIN_UPDATE_USER",
+    await admin.from("audit_logs").insert({
+      actor_id: actor.id,
+      actor_name: await actorName(admin, actor.id),
+      action: "UPDATE_USER",
       entity_type: "User",
-      entity_id: userId,
+      entity_id: id,
       result: "success",
-      details: "Updated display_name for user " + userId,
+      details: "ویرایش کاربر",
     });
     return json({ ok: true });
   }
 
-  return json({ error: "Method not allowed" }, 405);
+  // DELETE → حذف
+  if (req.method === "DELETE") {
+    const url = new URL(req.url);
+    const id = url.searchParams.get("id");
+    if (!id) return json({ error: "id الزامی" }, 400);
+    if (id === actor.id) return json({ error: "نمی‌توان خودتان را حذف کنید" }, 400);
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) return json({ error: error.message }, 500);
+    await admin.from("audit_logs").insert({
+      actor_id: actor.id,
+      actor_name: await actorName(admin, actor.id),
+      action: "DELETE_USER",
+      entity_type: "User",
+      entity_id: id,
+      result: "success",
+      details: "حذف کاربر",
+    });
+    return json({ ok: true });
+  }
+
+  return json({ error: "متد پشتیبانی نمی‌شود" }, 405);
 });

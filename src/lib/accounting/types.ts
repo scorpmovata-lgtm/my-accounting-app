@@ -1,80 +1,93 @@
-// مدل داده دفتر حسابداری — نسخه ۰.۱
-// این مدل بر اساس سند «مرحله صفر» طراحی شده است.
-// اصول مهم:
-//   - طلب و بدهی ناخالص جداگانه نگه‌داری می‌شوند؛ تهاتر خودکار ممنوع است.
-//   - مبلغ به‌صورت عدد صحیح (minor unit) ذخیره می‌شود؛ از float استفاده نمی‌شود.
-//   - هر تراکنش دارای واحد پول صریح است.
-//   - تاریخ مؤثر (effectiveAt) از زمان ثبت (createdAt) جدا است.
+// مدل داده دفتر حسابداری چندکاربری — نسخه ۲.۰
+// ============================================================
+// اصول معماری جدید:
+//   ۱) چند کاربر: هر کاربر دفتر خودش را دارد (تراکنش‌هایی که خودش ثبت کرده).
+//      کاربر A (ادمین) و کاربر B (با سطح دسترسی محدود) هرکدام وارد می‌شوند
+//      و دفتر خود را می‌بینند.
+//   ۲) طرف حساب‌ها متمرکز هستند: فقط ادمین ایجاد/ویرایش می‌کند و برای همه
+//      کاربران یکسان‌اند. یک طرف حساب می‌تواند به یک کاربر سامانه لینک شود
+//      (یعنی همان شخص است). مثلاً طرف حساب «وحید» با نام کاربری vahid@ همان
+//      کاربر A است.
+//   ۳) تطابق بین‌کاربری (حسابداری دوجانده): وقتی کاربر B رکورد می‌کند
+//      «دریافت ۱M از وحید در ۱۴۰۵/۸/۴» و کاربر A (که همان وحید است) رکورد
+//      می‌کند «پرداخت ۱M به فائزه در ۱۴۰۵/۸/۴»، سامانه این دو را کنار هم
+//      قرار می‌دهد و به‌عنوان یک رویداد واقعی تأییدشده علامت‌گذاری می‌کند.
+//
+// قرارداد علامت‌گذاری مانده:
+//   net = totalReceived − totalPaid
+//   net  > 0  →  بدهی  (من به طرف حساب بدهکارم)   [نقش: بدهکار]
+//   net  < 0  →  طلب   (طرف حساب به من بدهکار است) [نقش: طلب‌کار]
+//   net === 0 →  تسویه
+//   این قرارداد طبیعی است: «دریافت از» یعنی پول از طرف حساب به من رسیده،
+//   پس من به او بدهکار می‌شوم؛ «پرداخت به» برعکس.
 
 export type Currency = "IRT" | "IRR"; // تومان / ریال
 
-// انواع عملیات (بند ۴.۲ سند طراحی)
-export type TransactionType =
-  | "OPENING_RECEIVABLE" // مانده اولیه طلب
-  | "OPENING_PAYABLE" // مانده اولیه بدهی
-  | "RECEIVABLE_CHARGE" // ایجاد طلب جدید از طرف حساب
-  | "PAYABLE_CHARGE" // ایجاد بدهی جدید به طرف حساب
-  | "RECEIPT_ALLOCATION" // دریافت وجه تخصیص‌یافته به طلب باز
-  | "PAYMENT_ALLOCATION"; // پرداخت وجه تخصیص‌یافته به بدهی باز
+// سطح دسترسی کاربر عادی (ادمین دسترسی کامل دارد)
+export type UserScope = "balance_only" | "transaction_list";
 
-export type TransactionStatus = "POSTED" | "REVERSED";
+export type UserRole = "admin" | "user";
 
-export type CurrencyLabel = "تومان" | "ریال";
+// جهت تراکنش
+export type TxDirection = "received_from" | "paid_to";
 
-export interface Ledger {
+// وضعیت تطابق تراکنش با سمت دیگر:
+//   - unmatched: طرف حساب به کاربری لینک نیست (شخص عادی) → تطابق انتظار نمی‌رود
+//   - pending  : طرف حساب به کاربر لینک است ولی طرف مقابل هنوز ثبت نکرده
+//   - matched  : طرف مقابل هم ثبت کرده → زوج تطبیق‌یافته (تأیید دوطرفه)
+export type MatchStatus = "unmatched" | "pending" | "matched";
+
+// ---------------------------------------------------------------------------
+// موجودیت‌ها
+// ---------------------------------------------------------------------------
+
+export interface User {
   id: string;
-  ownerName: string;
-  name: string;
-  defaultCurrency: Currency;
-  createdAt: string; // ISO
+  username: string; // نام کاربری — ادمین تعیین می‌کند (مثلاً vahid)
+  password: string; // موک: متن ساده. در نسخه واقعی: هش‌شده سمت سرور.
+  displayName: string; // نام نمایشی فارسی (مثلاً وحید)
+  role: UserRole;
+  scope?: UserScope; // فقط برای role === "user"
+  // طرف حسابی که نماینده این کاربر است (لینک دوطرفه با Counterparty.linkedUserId)
+  linkedCounterpartyId?: string | null;
+  createdAt: string;
 }
 
-export interface Contact {
+export interface Counterparty {
   id: string;
-  ledgerId: string;
   displayName: string;
   notes?: string;
-  // اگر این مخاطب با یک کاربر واقعی (مثلاً در تلگرام) متصل باشد
-  linkedTelegramId?: string | null;
-  linkedProfileId?: string | null;
-  createdAt: string;
-  archivedAt?: string | null;
-}
-
-export interface Category {
-  id: string;
-  ledgerId: string;
-  name: string;
-  isActive: boolean;
-  sortOrder: number;
+  // اگر این طرف حساب با یک کاربر سامانه یکی است:
+  linkedUserId?: string | null;
+  linkedUsername?: string | null; // برای نمایش سریع
+  createdBy: string; // آیدی ادمین که ساخته
   createdAt: string;
   archivedAt?: string | null;
 }
 
 export interface Transaction {
   id: string;
-  ledgerId: string;
-  contactId: string;
-  categoryId?: string | null;
-  transactionType: TransactionType;
-  // مبلغ به‌صورت عدد صحیح در واحد صحیح (تومان/ریال؛ اعشار نداریم).
-  amount: number;
+  userId: string; // صاحب این رکورد دفتر (چه کسی ثبت کرده)
+  counterpartyId: string; // طرف حساب این تراکنش
+  direction: TxDirection; // دریافت از / پرداخت به
+  amount: number; // عدد صحیح در واحد صحیح (تومان/ریال)
   currency: Currency;
-  // تاریخ مؤثر تراکنش (ISO yyyy-mm-dd)
-  effectiveAt: string;
+  effectiveAt: string; // تاریخ شمسی yyyy-mm-dd
   createdAt: string; // ISO با زمان
   createdBy: string;
   description?: string;
-  status: TransactionStatus;
-  reversesTransactionId?: string | null;
-  // کلید idempotency برای جلوگیری از ثبت تکراری
+  status: "POSTED" | "REVERSED";
+  // تطابق با تراکنشِ سمتِ طرف مقابل
+  matchedTransactionId?: string | null;
+  matchStatus: MatchStatus;
   idempotencyKey: string;
 }
 
 export interface AuditLogEntry {
   id: string;
-  actorId: string;
-  action: string; // CREATE_TXN, REVERSE_TXN, ADD_CATEGORY, GENERATE_LINK_CODE, ...
+  actorId: string; // آیدی کاربر انجام‌دهنده
+  actorName: string; // نام نمایشی — برای گزارش
+  action: string; // CREATE_TXN, ADD_USER, ADD_COUNTERPARTY, ...
   entityType: string;
   entityId: string;
   result: "success" | "failure";
@@ -82,66 +95,37 @@ export interface AuditLogEntry {
   createdAt: string;
 }
 
-export type TelegramLinkStatus = "pending" | "linked" | "revoked";
+// ---------------------------------------------------------------------------
+// برچسب‌های فارسی
+// ---------------------------------------------------------------------------
 
-export interface TelegramLink {
-  id: string;
-  contactId: string; // مخاطبی که این لینک به آن تعلق دارد
-  telegramUserId?: string | null;
-  telegramUsername?: string | null;
-  status: TelegramLinkStatus;
-  scope: TelegramAccessScope;
-  linkedAt?: string | null;
-  revokedAt?: string | null;
-  createdAt: string;
-}
-
-export type TelegramAccessScope =
-  | "balance_only"
-  | "transaction_list"
-  | "transaction_details"
-  | "category_breakdown";
-
-export interface LinkCode {
-  code: string; // کد ۶ رقمی
-  contactId: string;
-  scope: TelegramAccessScope;
-  expiresAt: string; // ISO
-  used: boolean;
-  createdAt: string;
-}
-
-// برچسب فارسی انواع عملیات
-export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
-  OPENING_RECEIVABLE: "مانده اولیه طلب",
-  OPENING_PAYABLE: "مانده اولیه بدهی",
-  RECEIVABLE_CHARGE: "ایجاد طلب",
-  PAYABLE_CHARGE: "ایجاد بدهی",
-  RECEIPT_ALLOCATION: "دریافت",
-  PAYMENT_ALLOCATION: "پرداخت",
+export const DIRECTION_LABELS: Record<TxDirection, string> = {
+  received_from: "دریافت از",
+  paid_to: "پرداخت به",
 };
 
-// اثر عملیات بر طلب/بدهی
-export const TRANSACTION_EFFECT: Record<
-  TransactionType,
-  { receivable: 1 | -1 | 0; payable: 1 | -1 | 0 }
-> = {
-  OPENING_RECEIVABLE: { receivable: 1, payable: 0 },
-  OPENING_PAYABLE: { receivable: 0, payable: 1 },
-  RECEIVABLE_CHARGE: { receivable: 1, payable: 0 },
-  PAYABLE_CHARGE: { receivable: 0, payable: 1 },
-  RECEIPT_ALLOCATION: { receivable: -1, payable: 0 },
-  PAYMENT_ALLOCATION: { receivable: 0, payable: -1 },
+export const SCOPE_LABELS: Record<UserScope, string> = {
+  balance_only: "فقط مشاهده مانده",
+  transaction_list: "مشاهده مانده و تراکنش‌ها",
 };
 
-export const CURRENCY_LABELS: Record<Currency, CurrencyLabel> = {
+export const SCOPE_SHORT: Record<UserScope, string> = {
+  balance_only: "فقط مانده",
+  transaction_list: "مانده + تراکنش‌ها",
+};
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  admin: "ادمین",
+  user: "کاربر",
+};
+
+export const CURRENCY_LABELS: Record<Currency, "تومان" | "ریال"> = {
   IRT: "تومان",
   IRR: "ریال",
 };
 
-export const TELEGRAM_SCOPE_LABELS: Record<TelegramAccessScope, string> = {
-  balance_only: "فقط مانده",
-  transaction_list: "فهرست تراکنش‌ها",
-  transaction_details: "جزئیات تراکنش‌ها",
-  category_breakdown: "گزارش سرفصلی",
+export const MATCH_STATUS_LABELS: Record<MatchStatus, string> = {
+  unmatched: "شخص عادی (بدون تطابق)",
+  pending: "در انتظار طرف مقابل",
+  matched: "تطبیق‌یافته ✓",
 };

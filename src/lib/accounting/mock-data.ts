@@ -1,315 +1,337 @@
-// داده موک برای پروتوتایپ — فقط برای نسخه نمایشی
-// در نسخه واقعی، این داده از Supabase خوانده می‌شود.
+// داده موک برای دفتر حسابداری چندکاربری — نسخه ۲.۰
+// سناریوی نمایشی: وحید (ادمین = کاربر A) و فائزه (کاربر B با دسترسی تراکنش‌ها)
+//
+// تاریخچه (به ترتیب زمانی شمسی):
+//   ۱۴۰۵/۶/۲۰  — وحید ۱.۵M به رضا وام داد         → طلب ۱.۵M (رضا شخص عادی، بدون تطابق)
+//   ۱۴۰۵/۷/۱   — فائزه ۸۰۰k از سارا دریافت کرد     → بدهی ۸۰۰k (سارا شخص عادی)
+//   ۱۴۰۵/۷/۱۵  — فائزه ۲M به وحید وام داد          → وحید بدهی ۲M / فائزه طلب ۲M  ✓ تطبیق
+//   ۱۴۰۵/۷/۲۰  — وحید ۳۰۰k به مریم پرداخت           → وحید طلب ۳۰۰k / مریم بدهی ۳۰۰k ✓ تطبیق
+//   ۱۴۰۵/۸/۴   — وحید ۱M به فائزه پرداخت (قسط)      → وحید بدهی ۱M / فائزه طلب ۱M  ✓ تطبیق
+//   ۱۴۰۵/۸/۱۰  — وحید ۵۰۰k به فائزه پرداخت (اضافه)  → در انتظار طرف مقابل (فائزه هنوز ثبت نکرده)
+//
+// مانده نهایی:
+//   وحید (A): طلب ۱.۵M (رضا) + طلب ۳۰۰k (مریم) = طلب ۱.۸M؛ بدهی ۵۰۰k (فائزه) → خالص طلب ۱.۳M
+//   فائزه (B): طلب ۱M (وحید) [ pending 500k را نمی‌بیند]؛ بدهی ۸۰۰k (سارا) → خالص طلب ۲۰۰k
+//   مریم (C): بدهی ۳۰۰k (وحید)
 
 import type {
   AuditLogEntry,
-  Category,
-  Contact,
-  Ledger,
-  TelegramLink,
+  Counterparty,
   Transaction,
+  User,
 } from "./types";
 
-// تاریخ N روز پیش به ISO
-function daysAgo(days: number): string {
+// ISO با زمان ثابت (برای پایداری seed)
+function isoAt(daysAgo: number, hour = 10): string {
   const d = new Date();
-  d.setDate(d.getDate() - days);
-  d.setHours(10, 0, 0, 0);
+  d.setDate(d.getDate() - daysAgo);
+  d.setHours(hour, 0, 0, 0);
   return d.toISOString();
 }
 
-// تاریخ N روز پیش فقط بخش yyyy-mm-dd
-function daysAgoDateOnly(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
-}
+// ---------------------------------------------------------------------------
+// کاربران
+// ---------------------------------------------------------------------------
 
-export const seedLedger: Ledger = {
-  id: "ledger-1",
-  ownerName: "علی رضایی",
-  name: "دفتر شخصی علی",
-  defaultCurrency: "IRT",
-  createdAt: daysAgo(120),
-};
-
-export const seedContacts: Contact[] = [
+export const seedUsers: User[] = [
   {
-    id: "contact-1",
-    ledgerId: "ledger-1",
-    displayName: "مریم احمدی",
-    notes: "شریک تجاری",
-    linkedTelegramId: "tg-1045298132",
-    linkedProfileId: null,
-    createdAt: daysAgo(118),
+    id: "user-a",
+    username: "vahid",
+    password: "1234",
+    displayName: "وحید",
+    role: "admin",
+    linkedCounterpartyId: "cp-vahid",
+    createdAt: isoAt(130),
   },
   {
-    id: "contact-2",
-    ledgerId: "ledger-1",
+    id: "user-b",
+    username: "faezeh",
+    password: "1234",
+    displayName: "فائزه",
+    role: "user",
+    scope: "transaction_list",
+    linkedCounterpartyId: "cp-faezeh",
+    createdAt: isoAt(128),
+  },
+  {
+    id: "user-c",
+    username: "maryam",
+    password: "1234",
+    displayName: "مریم",
+    role: "user",
+    scope: "balance_only",
+    linkedCounterpartyId: "cp-maryam",
+    createdAt: isoAt(100),
+  },
+];
+
+// ---------------------------------------------------------------------------
+// طرف حساب‌ها (متمرکز — فقط ادمین ساخته)
+// ---------------------------------------------------------------------------
+
+export const seedCounterparties: Counterparty[] = [
+  {
+    id: "cp-vahid",
+    displayName: "وحید",
+    notes: "ادمین سامانه",
+    linkedUserId: "user-a",
+    linkedUsername: "vahid",
+    createdBy: "user-a",
+    createdAt: isoAt(129),
+  },
+  {
+    id: "cp-faezeh",
+    displayName: "فائزه",
+    notes: "کاربر با دسترسی تراکنش‌ها",
+    linkedUserId: "user-b",
+    linkedUsername: "faezeh",
+    createdBy: "user-a",
+    createdAt: isoAt(127),
+  },
+  {
+    id: "cp-maryam",
+    displayName: "مریم احمدی",
+    notes: "کاربر با دسترسی فقط مانده",
+    linkedUserId: "user-c",
+    linkedUsername: "maryam",
+    createdBy: "user-a",
+    createdAt: isoAt(99),
+  },
+  {
+    id: "cp-reza",
     displayName: "رضا کریمی",
     notes: "فروشنده کالا",
-    linkedTelegramId: null,
-    createdAt: daysAgo(115),
+    linkedUserId: null,
+    linkedUsername: null,
+    createdBy: "user-a",
+    createdAt: isoAt(125),
   },
   {
-    id: "contact-3",
-    ledgerId: "ledger-1",
+    id: "cp-sara",
     displayName: "سارا موسوی",
-    notes: "قرض",
-    linkedTelegramId: null,
-    createdAt: daysAgo(90),
-  },
-  {
-    id: "contact-4",
-    ledgerId: "ledger-1",
-    displayName: "محمد قاسمی",
     notes: "",
-    linkedTelegramId: null,
-    createdAt: daysAgo(60),
+    linkedUserId: null,
+    linkedUsername: null,
+    createdBy: "user-a",
+    createdAt: isoAt(90),
   },
 ];
 
-export const seedCategories: Category[] = [
-  {
-    id: "cat-1",
-    ledgerId: "ledger-1",
-    name: "کالا",
-    isActive: true,
-    sortOrder: 1,
-    createdAt: daysAgo(118),
-  },
-  {
-    id: "cat-2",
-    ledgerId: "ledger-1",
-    name: "قرض",
-    isActive: true,
-    sortOrder: 2,
-    createdAt: daysAgo(118),
-  },
-  {
-    id: "cat-3",
-    ledgerId: "ledger-1",
-    name: "خدمات",
-    isActive: true,
-    sortOrder: 3,
-    createdAt: daysAgo(118),
-  },
-  {
-    id: "cat-4",
-    ledgerId: "ledger-1",
-    name: "اجاره",
-    isActive: true,
-    sortOrder: 4,
-    createdAt: daysAgo(118),
-  },
-  {
-    id: "cat-5",
-    ledgerId: "ledger-1",
-    name: "سایر",
-    isActive: true,
-    sortOrder: 99,
-    createdAt: daysAgo(118),
-  },
-];
+// ---------------------------------------------------------------------------
+// تراکنش‌ها
+// ---------------------------------------------------------------------------
 
-// سناریوها (طبق سند مرحله صفر):
-//   ۴.۴: ایجاد طلب ۵ میلیون به مریم + دریافت ۲ میلیون → طلب باز ۳ میلیون
-//   ۴.۵: ایجاد بدهی ۱.۲ میلیون به رضا + پرداخت ۷۰۰ هزار → بدهی باز ۵۰۰ هزار
-//   ۴.۶: هم‌زمان طلب ۵ میلیون و بدهی ۴ میلیون به سارا → هر دو جدا می‌مانند
 export const seedTransactions: Transaction[] = [
-  // مریم: سناریوی ۴.۴
+  // ۱۴۰۵/۶/۲۰ — وحید ۱.۵M به رضا وام داد (شخص عادی، بدون تطابق)
   {
-    id: "tx-1",
-    ledgerId: "ledger-1",
-    contactId: "contact-1",
-    categoryId: "cat-1",
-    transactionType: "RECEIVABLE_CHARGE",
-    amount: 5_000_000,
-    currency: "IRT",
-    effectiveAt: daysAgoDateOnly(40),
-    createdAt: daysAgo(40),
-    createdBy: "owner",
-    description: "فروش کالا به مریم",
-    status: "POSTED",
-    idempotencyKey: "idem-1",
-  },
-  {
-    id: "tx-2",
-    ledgerId: "ledger-1",
-    contactId: "contact-1",
-    categoryId: "cat-1",
-    transactionType: "RECEIPT_ALLOCATION",
-    amount: 2_000_000,
-    currency: "IRT",
-    effectiveAt: daysAgoDateOnly(20),
-    createdAt: daysAgo(20),
-    createdBy: "owner",
-    description: "دریافت بخشی از طلب",
-    status: "POSTED",
-    idempotencyKey: "idem-2",
-  },
-  // رضا: سناریوی ۴.۵
-  {
-    id: "tx-3",
-    ledgerId: "ledger-1",
-    contactId: "contact-2",
-    categoryId: "cat-2",
-    transactionType: "PAYABLE_CHARGE",
-    amount: 1_200_000,
-    currency: "IRT",
-    effectiveAt: daysAgoDateOnly(35),
-    createdAt: daysAgo(35),
-    createdBy: "owner",
-    description: "قرض از رضا",
-    status: "POSTED",
-    idempotencyKey: "idem-3",
-  },
-  {
-    id: "tx-4",
-    ledgerId: "ledger-1",
-    contactId: "contact-2",
-    categoryId: "cat-2",
-    transactionType: "PAYMENT_ALLOCATION",
-    amount: 700_000,
-    currency: "IRT",
-    effectiveAt: daysAgoDateOnly(15),
-    createdAt: daysAgo(15),
-    createdBy: "owner",
-    description: "پرداخت بخشی از قرض",
-    status: "POSTED",
-    idempotencyKey: "idem-4",
-  },
-  // سارا: سناریوی ۴.۶ (هم‌زمان طلب و بدهی، بدون تهاتر)
-  {
-    id: "tx-5",
-    ledgerId: "ledger-1",
-    contactId: "contact-3",
-    categoryId: "cat-1",
-    transactionType: "RECEIVABLE_CHARGE",
-    amount: 5_000_000,
-    currency: "IRT",
-    effectiveAt: daysAgoDateOnly(25),
-    createdAt: daysAgo(25),
-    createdBy: "owner",
-    description: "فروش کالا به سارا",
-    status: "POSTED",
-    idempotencyKey: "idem-5",
-  },
-  {
-    id: "tx-6",
-    ledgerId: "ledger-1",
-    contactId: "contact-3",
-    categoryId: "cat-2",
-    transactionType: "PAYABLE_CHARGE",
-    amount: 4_000_000,
-    currency: "IRT",
-    effectiveAt: daysAgoDateOnly(22),
-    createdAt: daysAgo(22),
-    createdBy: "owner",
-    description: "قرض از سارا",
-    status: "POSTED",
-    idempotencyKey: "idem-6",
-  },
-  // محمد: یک طلب باز خالص
-  {
-    id: "tx-7",
-    ledgerId: "ledger-1",
-    contactId: "contact-4",
-    categoryId: "cat-3",
-    transactionType: "OPENING_RECEIVABLE",
+    id: "tx-a4",
+    userId: "user-a",
+    counterpartyId: "cp-reza",
+    direction: "paid_to",
     amount: 1_500_000,
     currency: "IRT",
-    effectiveAt: daysAgoDateOnly(60),
-    createdAt: daysAgo(60),
-    createdBy: "owner",
-    description: "مانده اولیه طلب",
+    effectiveAt: "1405-06-20",
+    createdAt: isoAt(110),
+    createdBy: "user-a",
+    description: "وام به رضا",
     status: "POSTED",
-    idempotencyKey: "idem-7",
+    matchedTransactionId: null,
+    matchStatus: "unmatched",
+    idempotencyKey: "idem-a4",
+  },
+  // ۱۴۰۵/۷/۱ — فائزه ۸۰۰k از سارا دریافت کرد (شخص عادی)
+  {
+    id: "tx-b3",
+    userId: "user-b",
+    counterpartyId: "cp-sara",
+    direction: "received_from",
+    amount: 800_000,
+    currency: "IRT",
+    effectiveAt: "1405-07-01",
+    createdAt: isoAt(95),
+    createdBy: "user-b",
+    description: "دریافت از سارا",
+    status: "POSTED",
+    matchedTransactionId: null,
+    matchStatus: "unmatched",
+    idempotencyKey: "idem-b3",
+  },
+  // ۱۴۰۵/۷/۱۵ — فائزه ۲M به وحید وام داد  ✓ زوج تطبیق
+  {
+    id: "tx-a1",
+    userId: "user-a",
+    counterpartyId: "cp-faezeh",
+    direction: "received_from",
+    amount: 2_000_000,
+    currency: "IRT",
+    effectiveAt: "1405-07-15",
+    createdAt: isoAt(80),
+    createdBy: "user-a",
+    description: "وام از فائزه",
+    status: "POSTED",
+    matchedTransactionId: "tx-b1",
+    matchStatus: "matched",
+    idempotencyKey: "idem-a1",
+  },
+  {
+    id: "tx-b1",
+    userId: "user-b",
+    counterpartyId: "cp-vahid",
+    direction: "paid_to",
+    amount: 2_000_000,
+    currency: "IRT",
+    effectiveAt: "1405-07-15",
+    createdAt: isoAt(80),
+    createdBy: "user-b",
+    description: "وام به وحید",
+    status: "POSTED",
+    matchedTransactionId: "tx-a1",
+    matchStatus: "matched",
+    idempotencyKey: "idem-b1",
+  },
+  // ۱۴۰۵/۷/۲۰ — وحید ۳۰۰k به مریم پرداخت  ✓ زوج تطبیق
+  {
+    id: "tx-a5",
+    userId: "user-a",
+    counterpartyId: "cp-maryam",
+    direction: "paid_to",
+    amount: 300_000,
+    currency: "IRT",
+    effectiveAt: "1405-07-20",
+    createdAt: isoAt(75),
+    createdBy: "user-a",
+    description: "هدیه به مریم",
+    status: "POSTED",
+    matchedTransactionId: "tx-c1",
+    matchStatus: "matched",
+    idempotencyKey: "idem-a5",
+  },
+  {
+    id: "tx-c1",
+    userId: "user-c",
+    counterpartyId: "cp-vahid",
+    direction: "received_from",
+    amount: 300_000,
+    currency: "IRT",
+    effectiveAt: "1405-07-20",
+    createdAt: isoAt(75),
+    createdBy: "user-c",
+    description: "دریافت هدیه از وحید",
+    status: "POSTED",
+    matchedTransactionId: "tx-a5",
+    matchStatus: "matched",
+    idempotencyKey: "idem-c1",
+  },
+  // ۱۴۰۵/۸/۴ — وحید ۱M به فائزه پرداخت (قسط)  ✓ زوج تطبیق
+  {
+    id: "tx-a2",
+    userId: "user-a",
+    counterpartyId: "cp-faezeh",
+    direction: "paid_to",
+    amount: 1_000_000,
+    currency: "IRT",
+    effectiveAt: "1405-08-04",
+    createdAt: isoAt(60),
+    createdBy: "user-a",
+    description: "پرداخت قسط وام",
+    status: "POSTED",
+    matchedTransactionId: "tx-b2",
+    matchStatus: "matched",
+    idempotencyKey: "idem-a2",
+  },
+  {
+    id: "tx-b2",
+    userId: "user-b",
+    counterpartyId: "cp-vahid",
+    direction: "received_from",
+    amount: 1_000_000,
+    currency: "IRT",
+    effectiveAt: "1405-08-04",
+    createdAt: isoAt(60),
+    createdBy: "user-b",
+    description: "دریافت قسط از وحید",
+    status: "POSTED",
+    matchedTransactionId: "tx-a2",
+    matchStatus: "matched",
+    idempotencyKey: "idem-b2",
+  },
+  // ۱۴۰۵/۸/۱۰ — وحید ۵۰۰k به فائزه پرداخت (طرف مقابل هنوز ثبت نکرده) → در انتظار
+  {
+    id: "tx-a3",
+    userId: "user-a",
+    counterpartyId: "cp-faezeh",
+    direction: "paid_to",
+    amount: 500_000,
+    currency: "IRT",
+    effectiveAt: "1405-08-10",
+    createdAt: isoAt(54),
+    createdBy: "user-a",
+    description: "پرداخت اضافه (فائزه هنوز ثبت نکرده)",
+    status: "POSTED",
+    matchedTransactionId: null,
+    matchStatus: "pending",
+    idempotencyKey: "idem-a3",
   },
 ];
+
+// ---------------------------------------------------------------------------
+// گزارش‌های ممیزی seed
+// ---------------------------------------------------------------------------
 
 export const seedAuditLogs: AuditLogEntry[] = [
   {
     id: "audit-1",
-    actorId: "owner",
-    action: "CREATE_TXN",
-    entityType: "Transaction",
-    entityId: "tx-1",
+    actorId: "user-a",
+    actorName: "وحید",
+    action: "ADD_COUNTERPARTY",
+    entityType: "Counterparty",
+    entityId: "cp-reza",
     result: "success",
-    details: "ایجاد طلب ۵٬۰۰۰٬۰۰۰ تومان برای مریم احمدی",
-    createdAt: daysAgo(40),
+    details: "افزودن طرف حساب «رضا کریمی»",
+    createdAt: isoAt(125),
   },
   {
     id: "audit-2",
-    actorId: "owner",
-    action: "CREATE_TXN",
-    entityType: "Transaction",
-    entityId: "tx-2",
+    actorId: "user-a",
+    actorName: "وحید",
+    action: "ADD_COUNTERPARTY",
+    entityType: "Counterparty",
+    entityId: "cp-faezeh",
     result: "success",
-    details: "دریافت ۲٬۰۰۰٬۰۰۰ تومان از مریم احمدی",
-    createdAt: daysAgo(20),
+    details: "افزودن طرف حساب «فائزه» (لینک به کاربر faezeh)",
+    createdAt: isoAt(127),
   },
   {
     id: "audit-3",
-    actorId: "owner",
+    actorId: "user-a",
+    actorName: "وحید",
     action: "CREATE_TXN",
     entityType: "Transaction",
-    entityId: "tx-3",
+    entityId: "tx-a1",
     result: "success",
-    details: "ایجاد بدهی ۱٬۲۰۰٬۰۰۰ تومان به رضا کریمی",
-    createdAt: daysAgo(35),
+    details: "ثبت «دریافت ۲٬۰۰۰٬۰۰۰ تومان از فائزه» — تطبیق‌یافته با tx-b1",
+    createdAt: isoAt(80),
   },
   {
     id: "audit-4",
-    actorId: "owner",
+    actorId: "user-b",
+    actorName: "فائزه",
     action: "CREATE_TXN",
     entityType: "Transaction",
-    entityId: "tx-4",
+    entityId: "tx-b2",
     result: "success",
-    details: "پرداخت ۷۰۰٬۰۰۰ تومان به رضا کریمی",
-    createdAt: daysAgo(15),
+    details: "ثبت «دریافت ۱٬۰۰۰٬۰۰۰ تومان از وحید» — تطبیق‌یافته با tx-a2",
+    createdAt: isoAt(60),
   },
   {
     id: "audit-5",
-    actorId: "owner",
+    actorId: "user-a",
+    actorName: "وحید",
     action: "CREATE_TXN",
     entityType: "Transaction",
-    entityId: "tx-5",
+    entityId: "tx-a3",
     result: "success",
-    details: "ایجاد طلب ۵٬۰۰۰٬۰۰۰ تومان برای سارا موسوی",
-    createdAt: daysAgo(25),
-  },
-  {
-    id: "audit-6",
-    actorId: "owner",
-    action: "CREATE_TXN",
-    entityType: "Transaction",
-    entityId: "tx-6",
-    result: "success",
-    details: "ایجاد بدهی ۴٬۰۰۰٬۰۰۰ تومان به سارا موسوی",
-    createdAt: daysAgo(22),
-  },
-  {
-    id: "audit-7",
-    actorId: "owner",
-    action: "CREATE_TXN",
-    entityType: "Transaction",
-    entityId: "tx-7",
-    result: "success",
-    details: "ثبت مانده اولیه طلب ۱٬۵۰۰٬۰۰۰ تومان برای محمد قاسمی",
-    createdAt: daysAgo(60),
-  },
-];
-
-export const seedTelegramLinks: TelegramLink[] = [
-  {
-    id: "tg-link-1",
-    contactId: "contact-1",
-    telegramUserId: "1045298132",
-    telegramUsername: "@maryam_ahmadi",
-    status: "linked",
-    scope: "balance_only",
-    linkedAt: daysAgo(50),
-    createdAt: daysAgo(55),
+    details: "ثبت «پرداخت ۵۰۰٬۰۰۰ تومان به فائزه» — در انتظار طرف مقابل",
+    createdAt: isoAt(54),
   },
 ];

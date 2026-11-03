@@ -1,0 +1,4 @@
+# محلی — کلیدهای secrets توابع را داخل مخزن نگذارید
+supabase/.temp/
+supabase/.branches/
+supabase/functions/**/.env

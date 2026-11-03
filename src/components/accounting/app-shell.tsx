@@ -1,29 +1,24 @@
 "use client";
 
+import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import {
   BookOpenText,
   Moon,
   Sun,
   LogOut,
-  Cloud,
-  Loader2,
   Menu,
   LayoutDashboard,
   Receipt,
-  Tags,
-  CloudCog,
   Settings,
-  FileText,
-  Rocket,
   ShieldCheck,
-  Send,
   User as UserIcon,
   PlusCircle,
   List as ListIcon,
-  Trash2,
+  Rocket,
+  Loader2,
+  Send,
 } from "lucide-react";
-import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -33,58 +28,65 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
-import { useAuthStore } from "@/store/auth-store";
 import { useAccountingStore } from "@/store/accounting-store";
 import { toPersianDigits } from "@/lib/accounting/jalali";
 import { useToast } from "@/hooks/use-toast";
-import { ConnectTab } from "./connect-tab";
-import { AdminTab } from "./admin-tab";
+import { LoginScreen } from "./login-screen";
 import { DashboardPanel } from "./dashboard-panel";
 import { TransactionsTable } from "./transactions-table";
 import { TransactionFormDialog } from "./transaction-form-dialog";
-import { CategoriesPanel } from "./categories-panel";
-import { TelegramLinkPanel } from "./telegram-link-panel";
-import { AuditLogPanel } from "./audit-log-panel";
+import { AdminTab } from "./admin-tab";
 import { SetupTab } from "./setup-tab";
+import { TelegramLinkPanel } from "./telegram-link-panel";
 
-type TabValue =
-  | "connect"
-  | "dashboard"
-  | "transactions"
-  | "categories"
-  | "telegram"
-  | "admin"
-  | "audit"
-  | "setup";
+type TabValue = "dashboard" | "transactions" | "telegram" | "admin" | "setup";
 
 interface NavItem {
   value: TabValue;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   adminOnly?: boolean;
+  hiddenForBalanceOnly?: boolean;
 }
 
 const ALL_NAV_ITEMS: NavItem[] = [
-  { value: "connect", label: "اتصال", icon: CloudCog },
-  { value: "dashboard", label: "داشبورد", icon: LayoutDashboard },
-  { value: "transactions", label: "تراکنش‌ها", icon: Receipt },
-  { value: "categories", label: "سرفصل‌ها", icon: Tags },
-  { value: "setup", label: "راه‌اندازی", icon: Rocket },
-  { value: "telegram", label: "تلگرام", icon: Send, adminOnly: true },
-  { value: "admin", label: "مدیریت", icon: Settings, adminOnly: true },
-  { value: "audit", label: "ممیزی", icon: FileText, adminOnly: true },
+  {
+    value: "dashboard",
+    label: "داشبورد",
+    icon: LayoutDashboard,
+  },
+  {
+    value: "transactions",
+    label: "تراکنش‌ها",
+    icon: Receipt,
+    hiddenForBalanceOnly: true,
+  },
+  {
+    value: "telegram",
+    label: "تلگرام",
+    icon: Send,
+  },
+  {
+    value: "admin",
+    label: "مدیریت",
+    icon: Settings,
+    adminOnly: true,
+  },
+  {
+    value: "setup",
+    label: "راه‌اندازی",
+    icon: Rocket,
+    adminOnly: true,
+  },
 ];
 
 export function AppShell() {
-  const authStatus = useAuthStore((s) => s.status);
-  const authUser = useAuthStore((s) => s.user);
-  const init = useAuthStore((s) => s.init);
-  const logout = useAuthStore((s) => s.logout);
-
-  const ledger = useAccountingStore((s) => s.ledger);
+  const authStatus = useAccountingStore((s) => s.authStatus);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const users = useAccountingStore((s) => s.users);
+  const logout = useAccountingStore((s) => s.logout);
+  const initRealSession = useAccountingStore((s) => s.initRealSession);
   const realMode = useAccountingStore((s) => s.realMode);
-  const activateRealMode = useAccountingStore((s) => s.activateRealMode);
-  const deactivateRealMode = useAccountingStore((s) => s.deactivateRealMode);
 
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
@@ -92,42 +94,39 @@ export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [txDialogOpen, setTxDialogOpen] = useState(false);
 
-  // init احراز هویت — فقط در mount
+  // بازیابی نشست ذخیره‌شده هنگام mount (فقط حالت واقعی)
   useEffect(() => {
-    const unsubscribe = init();
-    return () => {
-      unsubscribe();
-    };
-  }, [init]);
-
-  // فعال‌سازی real mode هنگام login موفق (در AppShell که همیشه رندر می‌شود)
-  // این منطق قبلاً در ConnectTab بود ولی چون ConnectTab فقط وقتی تب فعال است
-  // رندر می‌شود، بعد از refresh روی تب دیگر، realMode فعال نمی‌شد.
-  useEffect(() => {
-    if (authStatus === "authenticated" && authUser?.ledgerId && !realMode) {
-      void activateRealMode(
-        authUser.ledgerId,
-        authUser.displayName ?? authUser.email ?? "کاربر"
-      );
-    } else if (authStatus === "anonymous" && realMode) {
-      deactivateRealMode();
+    if (realMode) {
+      void initRealSession();
     }
-  }, [authStatus, authUser, realMode, activateRealMode, deactivateRealMode]);
+  }, []);
 
-  const isLoggedIn = authStatus === "authenticated" && !!authUser;
-  const isAdmin = isLoggedIn && !!authUser?.isAdmin;
+  const currentUser = users.find((u) => u.id === currentUserId);
+  const isLoggedIn = authStatus === "authenticated" && !!currentUser;
+  const isAdmin = isLoggedIn && currentUser?.role === "admin";
+  const isBalanceOnly =
+    isLoggedIn && currentUser?.role === "user" && currentUser?.scope === "balance_only";
 
-  // محاسبه تب قابل نمایش:
-  // ۱. اگر کاربر وارد نشده و روی تب غیر از setup/connect است → connect
-  // ۲. اگر تب فعلی admin-only است و کاربر admin نیست → connect
+  // صفحه بارگذاری هنگام بررسی نشست (حالت واقعی)
+  if (authStatus === "loading") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <div className="text-sm text-muted-foreground">در حال بررسی نشست...</div>
+      </div>
+    );
+  }
+
+  // اگر هنوز احراز هویت نشده، صفحه ورود
+  if (!isLoggedIn) {
+    return <LoginScreen />;
+  }
+
+  // محاسبه تب قابل نمایش
   function computeFinalTab(desired: string): TabValue {
-    const adminOnly: TabValue[] = ["telegram", "admin", "audit"];
-    if (!isLoggedIn && desired !== "setup" && desired !== "connect") {
-      return "connect";
-    }
-    if (adminOnly.includes(desired as TabValue) && !isAdmin) {
-      return "connect";
-    }
+    if ((desired === "admin" || desired === "setup") && !isAdmin)
+      return "dashboard";
+    if (desired === "transactions" && isBalanceOnly) return "dashboard";
     return desired as TabValue;
   }
 
@@ -140,48 +139,33 @@ export function AppShell() {
 
   async function handleLogout() {
     await logout();
-    toast({
-      title: "خروج انجام شد",
-      description: "نشست شما بسته شد.",
-    });
-    setTab("connect");
+    toast({ title: "خروج انجام شد", description: "نشست شما بسته شد." });
+    setTab("dashboard");
     setMenuOpen(false);
   }
 
-  const visibleNavItems = ALL_NAV_ITEMS.filter(
-    (item) => !item.adminOnly || isAdmin
-  );
+  const visibleNavItems = ALL_NAV_ITEMS.filter((item) => {
+    if (item.adminOnly && !isAdmin) return false;
+    if (item.hiddenForBalanceOnly && isBalanceOnly) return false;
+    return true;
+  });
 
-  // محتوای تب فعال
   let activeContent: React.ReactNode = null;
   switch (finalTab) {
-    case "connect":
-      activeContent = <ConnectTab />;
-      break;
     case "dashboard":
       activeContent = <DashboardPanel />;
       break;
     case "transactions":
       activeContent = (
         <div className="space-y-4">
-          {isLoggedIn ? (
+          {!isBalanceOnly && (
             <div className="flex justify-end">
               <TransactionFormDialog />
-            </div>
-          ) : (
-            <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30 p-3 text-sm text-amber-800 dark:text-amber-300">
-              برای ثبت تراکنش ابتدا از منو «اتصال» را باز کرده و وارد شوید.
             </div>
           )}
           <TransactionsTable />
         </div>
       );
-      break;
-    case "categories":
-      activeContent = <CategoriesPanel />;
-      break;
-    case "setup":
-      activeContent = <SetupTab />;
       break;
     case "telegram":
       activeContent = <TelegramLinkPanel />;
@@ -189,45 +173,16 @@ export function AppShell() {
     case "admin":
       activeContent = <AdminTab />;
       break;
-    case "audit":
-      activeContent = <AuditLogPanel />;
+    case "setup":
+      activeContent = <SetupTab />;
       break;
   }
-
-  // صفحه بارگذاری هنگام بررسی نشست
-  if (authStatus === "loading") {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <div className="text-sm text-muted-foreground">
-          در حال بررسی نشست...
-        </div>
-      </div>
-    );
-  }
-
-  // هدر: نمایش نام کاربر واقعی هنگام ورود، نام موک هنگام میهمان
-  const headerSubtitle = isLoggedIn ? (
-    <span className="inline-flex items-center gap-1.5">
-      کاربر: {authUser?.displayName ?? authUser?.email ?? "نامشخص"}
-      {isAdmin && (
-        <Badge
-          variant="secondary"
-          className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 h-4 px-1.5 text-[10px]"
-        >
-          ادمین
-        </Badge>
-      )}
-    </span>
-  ) : (
-    <span>صاحب دفتر (موک): {ledger.ownerName}</span>
-  );
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-40">
         <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-2">
-          {/* سمت راست (در RTL = اول): همبرگر */}
+          {/* همبرگر در سمت راست (اول در RTL) */}
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
             <SheetTrigger asChild>
               <Button
@@ -239,10 +194,7 @@ export function AppShell() {
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
-            <SheetContent
-              side="right"
-              className="w-72 p-0 flex flex-col"
-            >
+            <SheetContent side="right" className="w-72 p-0 flex flex-col">
               <SheetHeader className="p-4 border-b">
                 <SheetTitle className="flex items-center gap-2">
                   <BookOpenText className="h-5 w-5 text-primary" />
@@ -250,7 +202,6 @@ export function AppShell() {
                 </SheetTitle>
               </SheetHeader>
 
-              {/* فهرست ناوبری */}
               <nav className="flex-1 overflow-y-auto scrollbar-persian p-2 space-y-1">
                 {visibleNavItems.map((item) => {
                   const Icon = item.icon;
@@ -282,35 +233,26 @@ export function AppShell() {
                 })}
               </nav>
 
-              {/* بخش پایین: کاربر + تم */}
+              {/* بخش پایین: کاربر + تم + خروج */}
               <div className="border-t p-3 space-y-2 mt-auto">
-                {isLoggedIn && authUser ? (
-                  <div className="rounded-md bg-muted/50 p-2.5 text-xs space-y-1">
-                    <div className="flex items-center gap-2 font-medium">
-                      <UserIcon className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">
-                        {authUser.displayName ?? "کاربر"}
-                      </span>
-                      {isAdmin && (
-                        <Badge
-                          variant="secondary"
-                          className="h-4 px-1.5 text-[10px] mr-auto"
-                        >
-                          ادمین
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="text-muted-foreground truncate" dir="ltr">
-                      {authUser.email ?? "—"}
-                    </div>
+                <div className="rounded-md bg-muted/50 p-2.5 text-xs space-y-1">
+                  <div className="flex items-center gap-2 font-medium">
+                    <UserIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{currentUser.displayName}</span>
+                    {isAdmin ? (
+                      <Badge variant="secondary" className="h-4 px-1.5 text-[10px] mr-auto">
+                        ادمین
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="h-4 px-1.5 text-[10px] mr-auto">
+                        {isBalanceOnly ? "فقط مانده" : "تراکنش‌ها"}
+                      </Badge>
+                    )}
                   </div>
-                ) : (
-                  <div className="rounded-md bg-muted/50 p-2.5 text-xs text-muted-foreground">
-                    به‌عنوان میهمان مشاهده می‌کنید. برای دسترسی کامل وارد
-                    شوید.
+                  <div className="text-muted-foreground truncate font-mono" dir="ltr">
+                    {currentUser.username}
                   </div>
-                )}
-
+                </div>
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
@@ -323,63 +265,50 @@ export function AppShell() {
                     <Moon className="h-4 w-4 -rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100 ml-1" />
                     {theme === "dark" ? "روشن" : "تاریک"}
                   </Button>
-                  {isLoggedIn && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleLogout}
-                      aria-label="خروج"
-                      className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                    >
-                      <LogOut className="h-4 w-4 ml-1" />
-                      خروج
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLogout}
+                    aria-label="خروج"
+                    className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                  >
+                    <LogOut className="h-4 w-4 ml-1" />
+                    خروج
+                  </Button>
                 </div>
               </div>
             </SheetContent>
           </Sheet>
 
-          {/* نام اپ + کاربر (بعد از همبرگر، در سمت راست) */}
+          {/* نام اپ + کاربر */}
           <BookOpenText className="h-6 w-6 text-primary shrink-0" />
           <div className="flex flex-col min-w-0">
             <span className="font-bold leading-tight truncate">
-              {isLoggedIn
-                ? (authUser?.displayName ?? authUser?.email ?? "—")
-                : ledger.name}
+              {currentUser.displayName}
             </span>
             <span className="text-xs text-muted-foreground leading-tight truncate">
-              {headerSubtitle}
+              دفتر {currentUser.username}
+              {isAdmin && " — ادمین"}
             </span>
           </div>
-          {realMode && (
-            <Badge
-              variant="secondary"
-              className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 mr-1 shrink-0"
-            >
-              <Cloud className="h-3 w-3 ml-1" />
-              متصل
-            </Badge>
-          )}
         </div>
       </header>
 
-      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6 pb-20">
+      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6 pb-24">
         {activeContent}
       </main>
 
-      {/* منوی پایین صفحه: افزودن / لیست / حذف تراکنش */}
-      {isLoggedIn && (
+      {/* منوی پایین صفحه */}
+      {!isBalanceOnly && (
         <nav
-          className="fixed bottom-0 inset-x-0 z-50 border-t bg-card/95 backdrop-blur-md safe-area-pb"
-          aria-label="منوی تراکنش‌ها"
+          className="fixed bottom-0 inset-x-0 z-50 border-t bg-card/95 backdrop-blur-md"
+          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+          aria-label="منوی دسترسی سریع"
         >
           <div className="mx-auto max-w-6xl grid grid-cols-3">
             <button
               type="button"
-              onClick={() => {
-                setTxDialogOpen(true);
-              }}
+              onClick={() => setTxDialogOpen(true)}
               className="flex flex-col items-center justify-center gap-1 py-2.5 text-muted-foreground hover:text-primary transition-colors"
               aria-label="افزودن تراکنش"
             >
@@ -401,32 +330,33 @@ export function AppShell() {
             </button>
             <button
               type="button"
-              onClick={() => selectTab("transactions")}
-              className="flex flex-col items-center justify-center gap-1 py-2.5 text-muted-foreground hover:text-rose-600 transition-colors"
-              aria-label="حذف تراکنش"
+              onClick={() => selectTab("dashboard")}
+              className={`flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
+                finalTab === "dashboard"
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-primary"
+              }`}
+              aria-label="داشبورد"
             >
-              <Trash2 className="h-5 w-5" />
-              <span className="text-[11px] font-medium">حذف تراکنش</span>
+              <LayoutDashboard className="h-5 w-5" />
+              <span className="text-[11px] font-medium">داشبورد</span>
             </button>
           </div>
         </nav>
       )}
 
-      {/* دیالوگ افزودن تراکنش (متحرک از منوی پایین) */}
-      {isLoggedIn && (
-        <TransactionFormDialog
-          open={txDialogOpen}
-          onOpenChange={setTxDialogOpen}
-        />
+      {/* دیالوگ افزودن تراکنش */}
+      {!isBalanceOnly && (
+        <TransactionFormDialog open={txDialogOpen} onOpenChange={setTxDialogOpen} />
       )}
 
       <footer className="border-t bg-card/80 backdrop-blur-sm mt-auto">
         <div className="mx-auto max-w-6xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <div>دفتر حسابداری — نسخه {toPersianDigits("1.4")}</div>
+          <div>دفتر حسابداری — نسخه {toPersianDigits("2.0")} (چندکاربری)</div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span>ساخته‌شده با Next.js</span>
+            <span>تطابق خودکار بین‌کاربری</span>
             <span aria-hidden>•</span>
-            <span>متصل به Supabase</span>
+            <span>تقویم شمسی</span>
           </div>
         </div>
       </footer>

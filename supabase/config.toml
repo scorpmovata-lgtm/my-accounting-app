@@ -1,0 +1,12 @@
+# Supabase CLI config — دفتر حسابداری نسخه ۲.۰
+# بعد از اجرای «supabase link --project-ref <PROJECT_REF>» نیازی به تغییر این فایل نیست.
+project_id = "my-accounting-app"
+
+[functions.create-transaction]
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = false
+
+[functions.admin-counterparties]
+verify_jwt = false

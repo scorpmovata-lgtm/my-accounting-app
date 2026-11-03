@@ -1,97 +1,153 @@
-// Zustand store — مدیریت state کلاینت برای اپ حسابداری
-// این store در دو حالت کار می‌کند:
-//   - mockMode: داده موک seed شده و عملیات فقط روی state محلی انجام می‌شود.
-//   - realMode: داده واقعی از Supabase خوانده می‌شود و عملیات از طریق Edge
-//     Function یا Supabase Client مستقیماً اعمال می‌شوند.
+// Zustand store — دفتر حسابداری چندکاربری (نسخه ۲.۰، حالت موک)
+// ============================================================
+// این استور منبع واحدِ داده و احراز هویت است:
+//   - users: همه کاربران سامانه (ادمین + کاربران عادی با scope)
+//   - counterparties: طرف حساب‌های متمرکز (ممکن است به کاربر لینک باشند)
+//   - transactions: همه تراکنش‌ها در همه دفترها
+//   - auditLogs: گزارش‌های ممیزی
+//   - currentUserId / authStatus / authError: نشست فعلی
+//
+// تطابق بین‌کاربری: پس از هر تغییر (افزودن تراکنش/کاربر/طرف حساب)،
+// recomputeMatches وضعیت تطابق همه تراکنش‌ها را به‌روزرسانی می‌کند.
 
 import { create } from "zustand";
 import {
   AuditLogEntry,
-  Category,
-  Contact,
+  Counterparty,
   Currency,
-  Ledger,
-  LinkCode,
-  TelegramLink,
-  TelegramAccessScope,
+  MatchStatus,
   Transaction,
-  TransactionType,
+  TxDirection,
+  User,
+  UserScope,
+  UserRole,
 } from "@/lib/accounting/types";
-import { validateTransaction } from "@/lib/accounting/engine";
+import {
+  computeMatchStatus,
+  isMatchingPair,
+  validateTransactionInput,
+} from "@/lib/accounting/engine";
 import {
   seedAuditLogs,
-  seedCategories,
-  seedContacts,
-  seedLedger,
-  seedTelegramLinks,
+  seedCounterparties,
   seedTransactions,
+  seedUsers,
 } from "@/lib/accounting/mock-data";
 import {
-  addCategoryToSupabase,
-  addContactToSupabase,
-  addTransactionViaEdgeFunction,
-  fetchAuditLogs,
-  fetchCategories,
-  fetchContacts,
-  fetchLedgerById,
-  fetchTelegramLinks,
-  fetchTransactions,
-  generateLinkCodeInSupabase,
-  revokeTelegramLinkInSupabase,
-} from "@/lib/supabase/api";
+  realMode,
+  signInWithUsername,
+  signOutReal,
+  getCurrentRealUser,
+  fetchRealUsers,
+  fetchRealCounterparties,
+  fetchRealTransactions,
+  createTransactionReal,
+  adminCreateUserReal,
+  adminUpdateUserReal,
+  adminDeleteUserReal,
+  adminCreateCounterpartyReal,
+  adminUpdateCounterpartyReal,
+  adminDeleteCounterpartyReal,
+} from "@/lib/supabase/real";
+
+// ---------------------------------------------------------------------------
+// انواع ورودی
+// ---------------------------------------------------------------------------
 
 export interface AddTransactionInput {
-  contactId: string;
-  categoryId?: string | null;
-  transactionType: TransactionType;
+  direction: TxDirection;
+  counterpartyId: string;
   amount: number;
   currency: Currency;
-  effectiveAt: string;
+  effectiveAt: string; // شمسی yyyy-mm-dd
   description?: string;
-  // هنگام true بودن، در mockMode پرداخت/دریافت بیش از مانده به دو تراکنش
-  // (تخصیص تا سقف مانده + ایجاد طلب/بدهی برای مابه‌التفاوت) شکسته می‌شود.
-  allowOverpay?: boolean;
 }
 
-export interface AddTransactionResult {
+export interface AddUserInput {
+  username: string;
+  password: string;
+  displayName: string;
+  role: UserRole;
+  scope?: UserScope;
+  linkedCounterpartyId?: string | null;
+}
+
+export interface AddCounterpartyInput {
+  displayName: string;
+  notes?: string;
+  linkedUserId?: string | null;
+}
+
+interface Result {
   ok: boolean;
   error?: string;
-  transaction?: Transaction;
-  // در حالت split (overpay در mock)، تراکنش دوم
-  secondaryTransaction?: Transaction;
 }
 
 interface AccountingState {
-  realMode: boolean;
-  realLedgerId: string | null;
-  realOwnerName: string | null;
-
-  ledger: Ledger;
-  contacts: Contact[];
-  categories: Category[];
+  // داده
+  users: User[];
+  counterparties: Counterparty[];
   transactions: Transaction[];
   auditLogs: AuditLogEntry[];
-  telegramLinks: TelegramLink[];
-  linkCodes: LinkCode[];
 
-  // کنترل حالت real
-  activateRealMode: (ledgerId: string, ownerName: string) => Promise<void>;
-  deactivateRealMode: () => void;
+  // احراز هویت
+  realMode: boolean;
+  authStatus: "loading" | "anonymous" | "authenticated";
+  currentUserId: string | null;
+  authError: string | null;
+  login: (username: string, password: string) => Promise<Result>;
+  logout: () => Promise<void>;
+  clearAuthError: () => void;
+  initRealSession: () => Promise<void>;
   loadRealData: () => Promise<void>;
 
-  // اعمال (همگی async تا در realMode بتوانند API را صدا بزنند)
+  // مدیریت کاربران (ادمین)
+  addUser: (input: AddUserInput, actorId: string) => Promise<Result & { user?: User }>;
+  updateUser: (
+    id: string,
+    patch: Partial<
+      Pick<User, "displayName" | "password" | "scope" | "linkedCounterpartyId">
+    >,
+    actorId: string
+  ) => Promise<Result>;
+  deleteUser: (id: string, actorId: string) => Promise<void>;
+
+  // مدیریت طرف حساب‌ها (ادمین)
+  addCounterparty: (
+    input: AddCounterpartyInput,
+    actorId: string
+  ) => Promise<Result & { counterparty?: Counterparty }>;
+  updateCounterparty: (
+    id: string,
+    patch: Partial<Pick<Counterparty, "displayName" | "notes" | "linkedUserId">>,
+    actorId: string
+  ) => Promise<Result>;
+  deleteCounterparty: (id: string, actorId: string) => Promise<void>;
+
+  // تراکنش‌ها
   addTransaction: (
-    input: AddTransactionInput
-  ) => Promise<AddTransactionResult>;
-  addCategory: (name: string) => Promise<Category | null>;
-  deactivateCategory: (id: string) => void;
-  addContact: (name: string, notes?: string) => Promise<Contact | null>;
-  generateLinkCode: (
-    contactId: string,
-    scope: TelegramAccessScope
-  ) => Promise<LinkCode | null>;
-  revokeTelegramLink: (id: string) => Promise<void>;
+    input: AddTransactionInput,
+    actorId: string
+  ) => Promise<Result & {
+    transaction?: Transaction;
+    matchedWith?: Transaction | null;
+  }>;
+
+  // داخلی
+  recomputeMatches: () => void;
+  logAction: (
+    actorId: string,
+    action: string,
+    entityType: string,
+    entityId: string,
+    result: "success" | "failure",
+    details: string
+  ) => void;
 }
+
+// ---------------------------------------------------------------------------
+// ابزارها
+// ---------------------------------------------------------------------------
 
 function uid(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random()
@@ -99,554 +155,662 @@ function uid(prefix: string): string {
     .slice(2, 8)}`;
 }
 
-function makeLinkCode(): string {
-  // کد ۶ رقمی
-  return Math.floor(100000 + Math.random() * 900000).toString();
+function findActorName(users: User[], id: string): string {
+  return users.find((u) => u.id === id)?.displayName ?? "نامشخص";
 }
 
-export const useAccountingStore = create<AccountingState>((set, get) => ({
-  // state
-  realMode: false,
-  realLedgerId: null,
-  realOwnerName: null,
+/**
+ * نرمال‌سازی ورودی کاربر:
+ * - ارقام فارسی/عربی → لاتین (۱۲۳۴ / ١٢٣٤ → 1234)
+ * - نویسه‌های عربی → فارسی (ي→ی ، ك→ک)
+ * - حذف فاصله‌های ابتدا و انتها و نویسه‌های نامرئی RTL
+ */
+export function normalizeInput(raw: string): string {
+  const fa = "۰۱۲۳۴۵۶۷۸۹";
+  const ar = "٠١٢٣٤٥٦٧٨٩";
+  return raw
+    .replace(/[۰-۹٠-٩]/g, (d) => {
+      const i = fa.indexOf(d);
+      return String(i >= 0 ? i : ar.indexOf(d));
+    })
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[\u200c\u200f\u200e\u202a-\u202e\ufeff]/g, "")
+    .trim();
+}
 
-  // داده پیش‌فرض (mock)
-  ledger: seedLedger,
-  contacts: seedContacts,
-  categories: seedCategories,
+// ---------------------------------------------------------------------------
+// استور
+// ---------------------------------------------------------------------------
+
+export const useAccountingStore = create<AccountingState>((set, get) => ({
+  users: seedUsers,
+  counterparties: seedCounterparties,
   transactions: seedTransactions,
   auditLogs: seedAuditLogs,
-  telegramLinks: seedTelegramLinks,
-  linkCodes: [],
 
-  // ============================================================
-  // کنترل حالت real
-  // ============================================================
+  realMode,
+  // در حالت واقعی، ابتدا "loading" تا نشست بررسی شود؛ در موک "anonymous".
+  authStatus: realMode ? "loading" : "anonymous",
+  currentUserId: null,
+  authError: null,
 
-  activateRealMode: async (ledgerId, ownerName) => {
+  // -------------------------------------------------------------------------
+  // احراز هویت
+  // -------------------------------------------------------------------------
+
+  login: async (username, password) => {
+    // نرمال‌سازی ورودی — کیبورد فارسی/فاصله اضافه نباید مانع ورود شود
+    const usernameNorm = normalizeInput(username).toLowerCase();
+    const passwordNorm = normalizeInput(password);
+    // ---- حالت واقعی ----
+    if (get().realMode) {
+      try {
+        await signInWithUsername(usernameNorm, passwordNorm);
+        const u = await getCurrentRealUser();
+        if (!u) {
+          set({ authError: "پروفایل کاربر یافت نشد." });
+          return { ok: false, error: "پروفایل کاربر یافت نشد." };
+        }
+        set({
+          authStatus: "authenticated",
+          currentUserId: u.id,
+          authError: null,
+        });
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "خطای ناشناخته";
+        set({ authError: msg });
+        return { ok: false, error: msg };
+      }
+    }
+    // ---- حالت موک ----
+    const users = get().users;
+    const u = users.find((x) => x.username.toLowerCase() === usernameNorm);
+    if (!u) {
+      set({ authError: "نام کاربری یافت نشد." });
+      return { ok: false, error: "نام کاربری یافت نشد." };
+    }
+    if (u.password !== passwordNorm) {
+      set({ authError: "رمز عبور نادرست است." });
+      return { ok: false, error: "رمز عبور نادرست است." };
+    }
     set({
-      realMode: true,
-      realLedgerId: ledgerId,
-      realOwnerName: ownerName,
+      authStatus: "authenticated",
+      currentUserId: u.id,
+      authError: null,
     });
-    await get().loadRealData();
+    return { ok: true };
   },
 
-  deactivateRealMode: () => {
+  logout: async () => {
+    if (get().realMode) {
+      await signOutReal();
+    }
     set({
-      realMode: false,
-      realLedgerId: null,
-      realOwnerName: null,
-      // بازگشت به داده موک
-      ledger: seedLedger,
-      contacts: seedContacts,
-      categories: seedCategories,
-      transactions: seedTransactions,
-      auditLogs: seedAuditLogs,
-      telegramLinks: seedTelegramLinks,
-      linkCodes: [],
-    });
-  },
-
-  loadRealData: async () => {
-    const state = get();
-    if (!state.realMode || !state.realLedgerId) return;
-    const ledgerId = state.realLedgerId;
-    try {
-      const [ledger, contacts, categories, transactions, auditLogs, telegramLinks] =
-        await Promise.all([
-          fetchLedgerById(ledgerId),
-          fetchContacts(ledgerId),
-          fetchCategories(ledgerId),
-          fetchTransactions(ledgerId),
-          fetchAuditLogs(ledgerId),
-          fetchTelegramLinks(ledgerId),
-        ]);
-      const finalLedger: Ledger = ledger
-        ? {
-            ...ledger,
-            ownerName: state.realOwnerName ?? ledger.ownerName,
-          }
+      authStatus: "anonymous",
+      currentUserId: null,
+      authError: null,
+      // بازگشت به داده موک در حالت موک
+      ...(get().realMode
+        ? {}
         : {
-            id: ledgerId,
-            ownerName: state.realOwnerName ?? "صاحب دفتر",
-            name: "دفتر شخصی من",
-            defaultCurrency: "IRT",
-            createdAt: new Date().toISOString(),
-          };
+            users: seedUsers,
+            counterparties: seedCounterparties,
+            transactions: seedTransactions,
+            auditLogs: seedAuditLogs,
+          }),
+    });
+  },
+
+  clearAuthError: () => set({ authError: null }),
+
+  // بازیابی نشست ذخیره‌شده هنگام refresh (فقط حالت واقعی)
+  initRealSession: async () => {
+    if (!get().realMode) return;
+    try {
+      const u = await getCurrentRealUser();
+      if (!u) {
+        set({ authStatus: "anonymous" });
+        return;
+      }
       set({
-        ledger: finalLedger,
-        contacts,
-        categories,
-        transactions,
-        auditLogs,
-        telegramLinks,
-        linkCodes: [],
+        authStatus: "authenticated",
+        currentUserId: u.id,
+        authError: null,
       });
+      await get().loadRealData();
+    } catch {
+      set({ authStatus: "anonymous" });
+    }
+  },
+
+  // بارگذاری داده واقعی از Supabase
+  loadRealData: async () => {
+    if (!get().realMode) return;
+    const uid_ = get().currentUserId;
+    if (!uid_) return;
+    try {
+      const [users, counterparties, transactions] = await Promise.all([
+        fetchRealUsers(),
+        fetchRealCounterparties(),
+        fetchRealTransactions(uid_),
+      ]);
+      set({ users, counterparties, transactions });
     } catch (e) {
       console.error("loadRealData error:", e);
     }
   },
 
-  // ============================================================
-  // Mutations
-  // ============================================================
+  // -------------------------------------------------------------------------
+  // مدیریت کاربران (ادمین)
+  // -------------------------------------------------------------------------
 
-  addTransaction: async (input) => {
+  addUser: async (input, actorId) => {
+    // ---- real branch ----
+    if (get().realMode) {
+      try {
+        await adminCreateUserReal(input);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
     const state = get();
-
-    // حالت real: تماس با Edge Function
-    if (state.realMode) {
-      const result = await addTransactionViaEdgeFunction(input);
-      if (result.ok && result.transaction) {
-        set({
-          transactions: [result.transaction, ...state.transactions],
-        });
-        // تلاش برای به‌روزرسانی audit logs از سرور
-        void get().loadRealData();
-        return { ok: true, transaction: result.transaction };
-      }
-      return { ok: false, error: result.error };
-    }
-
-    // حالت mock
     // اعتبارسنجی
-    const validation = validateTransaction(
-      {
-        contactId: input.contactId,
-        transactionType: input.transactionType,
-        amount: input.amount,
-      },
-      state.transactions
-    );
+    const username = input.username.trim();
+    if (!username) {
+      return { ok: false, error: "نام کاربری الزامی است." };
+    }
+    if (username.length < 3) {
+      return { ok: false, error: "نام کاربری باید حداقل ۳ نویسه باشد." };
+    }
+    if (
+      state.users.some(
+        (u) => u.username.toLowerCase() === username.toLowerCase()
+      )
+    ) {
+      return { ok: false, error: "این نام کاربری قبلاً گرفته شده است." };
+    }
+    if (!input.password || input.password.length < 4) {
+      return { ok: false, error: "رمز عبور باید حداقل ۴ نویسه باشد." };
+    }
+    if (!input.displayName.trim()) {
+      return { ok: false, error: "نام نمایشی الزامی است." };
+    }
+    if (input.role === "user" && !input.scope) {
+      return {
+        ok: false,
+        error: "برای کاربر عادی، سطح دسترسی باید مشخص شود.",
+      };
+    }
 
-    // بررسی overpay
-    const isReceipt = input.transactionType === "RECEIPT_ALLOCATION";
-    const isPayment = input.transactionType === "PAYMENT_ALLOCATION";
+    const now = new Date().toISOString();
+    const user: User = {
+      id: uid("user"),
+      username,
+      password: input.password,
+      displayName: input.displayName.trim(),
+      role: input.role,
+      scope: input.role === "user" ? input.scope : undefined,
+      linkedCounterpartyId: input.linkedCounterpartyId ?? null,
+      createdAt: now,
+    };
+    const actorName = findActorName(state.users, actorId);
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "ADD_USER",
+      entityType: "User",
+      entityId: user.id,
+      result: "success",
+      details: `افزودن کاربر «${user.displayName}» (${user.username}) با نقش ${
+        user.role === "admin" ? "ادمین" : "کاربر"
+      }`,
+      createdAt: now,
+    };
+    set({
+      users: [...state.users, user],
+      auditLogs: [log, ...state.auditLogs],
+    });
+    return { ok: true, user };
+  },
 
-    // محاسبه مانده فعلی برای این مخاطب
-    let outstandingReceivable = 0;
-    let outstandingPayable = 0;
-    {
-      const contactTxns = state.transactions.filter(
-        (t) =>
-          t.contactId === input.contactId &&
-          t.status === "POSTED"
-      );
-      for (const t of contactTxns) {
-        const eff =
-          t.transactionType === "RECEIVABLE_CHARGE" ||
-          t.transactionType === "OPENING_RECEIVABLE"
-            ? "receivable+"
-            : t.transactionType === "RECEIPT_ALLOCATION"
-            ? "receivable-"
-            : t.transactionType === "PAYABLE_CHARGE" ||
-              t.transactionType === "OPENING_PAYABLE"
-            ? "payable+"
-            : t.transactionType === "PAYMENT_ALLOCATION"
-            ? "payable-"
-            : null;
-        if (eff === "receivable+") outstandingReceivable += t.amount;
-        else if (eff === "receivable-") outstandingReceivable -= t.amount;
-        else if (eff === "payable+") outstandingPayable += t.amount;
-        else if (eff === "payable-") outstandingPayable -= t.amount;
+  updateUser: async (id, patch, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminUpdateUserReal(id, patch);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
       }
     }
-
-    // اگر overpay مجاز است و receipt > receivable یا payment > payable
-    const overpayReceipt = isReceipt && input.amount > outstandingReceivable;
-    const overpayPayment = isPayment && input.amount > outstandingPayable;
-
-    if (!validation.ok && !((overpayReceipt || overpayPayment) && input.allowOverpay)) {
-      const failLog: AuditLogEntry = {
-        id: uid("audit"),
-        actorId: "owner",
-        action: "CREATE_TXN",
-        entityType: "Transaction",
-        entityId: "—",
-        result: "failure",
-        details: `تلاش ناموفق ثبت تراکنش: ${validation.error}`,
-        createdAt: new Date().toISOString(),
-      };
-      set({ auditLogs: [failLog, ...state.auditLogs] });
-      return { ok: false, error: validation.error };
-    }
-
-    const contact = state.contacts.find((c) => c.id === input.contactId);
+    const state = get();
+    const user = state.users.find((u) => u.id === id);
+    if (!user) return { ok: false, error: "کاربر یافت نشد." };
+    const next: User = { ...user, ...patch };
     const now = new Date().toISOString();
+    const actorName = findActorName(state.users, actorId);
+    const changes: string[] = [];
+    if (patch.displayName && patch.displayName !== user.displayName) {
+      changes.push(`نام نمایشی: «${user.displayName}» → «${patch.displayName}»`);
+    }
+    if (patch.password) changes.push("رمز عبور به‌روزرسانی شد");
+    if (patch.scope && patch.scope !== user.scope) {
+      changes.push(`سطح دسترسی تغییر کرد`);
+    }
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "UPDATE_USER",
+      entityType: "User",
+      entityId: id,
+      result: "success",
+      details: `ویرایش کاربر «${user.displayName}»${
+        changes.length ? " — " + changes.join("، ") : ""
+      }`,
+      createdAt: now,
+    };
+    set({
+      users: state.users.map((u) => (u.id === id ? next : u)),
+      auditLogs: [log, ...state.auditLogs],
+    });
+    return { ok: true };
+  },
 
-    // حالت split (overpay در mock)
-    if (overpayReceipt && input.allowOverpay) {
-      const receiptAmount = outstandingReceivable;
-      const excessAmount = input.amount - outstandingReceivable;
-      const primaryTxn: Transaction = {
-        id: uid("tx"),
-        ledgerId: state.ledger.id,
-        contactId: input.contactId,
-        categoryId: input.categoryId ?? null,
-        transactionType: "RECEIPT_ALLOCATION",
-        amount: receiptAmount,
-        currency: input.currency,
-        effectiveAt: input.effectiveAt,
-        createdAt: now,
-        createdBy: "owner",
-        description: input.description,
-        status: "POSTED",
-        idempotencyKey: uid("idem"),
+  deleteUser: async (id, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminDeleteUserReal(id);
+        await get().loadRealData();
+      } catch (e) {
+        /* بی‌صدا */
+      }
+      return;
+    }
+    const state = get();
+    const user = state.users.find((u) => u.id === id);
+    if (!user) return;
+    const now = new Date().toISOString();
+    const actorName = findActorName(state.users, actorId);
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "DELETE_USER",
+      entityType: "User",
+      entityId: id,
+      result: "success",
+      details: `حذف کاربر «${user.displayName}» (${user.username})`,
+      createdAt: now,
+    };
+    set({
+      users: state.users.filter((u) => u.id !== id),
+      auditLogs: [log, ...state.auditLogs],
+    });
+  },
+
+  // -------------------------------------------------------------------------
+  // مدیریت طرف حساب‌ها (ادمین)
+  // -------------------------------------------------------------------------
+
+  addCounterparty: async (input, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminCreateCounterpartyReal(input);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const name = input.displayName.trim();
+    if (!name) {
+      return { ok: false, error: "نام طرف حساب الزامی است." };
+    }
+    // اگر به کاربری لینک می‌شود، آن کاربر وجود داشته باشد
+    let linkedUsername: string | null = null;
+    if (input.linkedUserId) {
+      const linkedUser = state.users.find((u) => u.id === input.linkedUserId);
+      if (!linkedUser) {
+        return { ok: false, error: "کاربر لینک‌شده یافت نشد." };
+      }
+      linkedUsername = linkedUser.username;
+      // این کاربر قبلاً به طرف حساب دیگری لینک شده؟
+      const alreadyLinked = state.counterparties.find(
+        (c) => c.linkedUserId === input.linkedUserId
+      );
+      if (alreadyLinked) {
+        return {
+          ok: false,
+          error: `کاربر «${linkedUser.displayName}» قبلاً به طرف حساب «${alreadyLinked.displayName}» لینک شده است.`,
+        };
+      }
+    }
+    const now = new Date().toISOString();
+    const cp: Counterparty = {
+      id: uid("cp"),
+      displayName: name,
+      notes: input.notes?.trim() || undefined,
+      linkedUserId: input.linkedUserId ?? null,
+      linkedUsername,
+      createdBy: actorId,
+      createdAt: now,
+    };
+    const actorName = findActorName(state.users, actorId);
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "ADD_COUNTERPARTY",
+      entityType: "Counterparty",
+      entityId: cp.id,
+      result: "success",
+      details: `افزودن طرف حساب «${cp.displayName}»${
+        cp.linkedUsername ? ` (لینک به کاربر ${cp.linkedUsername})` : ""
+      }`,
+      createdAt: now,
+    };
+    set({
+      counterparties: [...state.counterparties, cp],
+      auditLogs: [log, ...state.auditLogs],
+    });
+    return { ok: true, counterparty: cp };
+  },
+
+  updateCounterparty: async (id, patch, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminUpdateCounterpartyReal(id, patch);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const cp = state.counterparties.find((c) => c.id === id);
+    if (!cp) return { ok: false, error: "طرف حساب یافت نشد." };
+    let linkedUsername = cp.linkedUsername ?? null;
+    if (patch.linkedUserId !== undefined) {
+      if (patch.linkedUserId) {
+        const linkedUser = state.users.find((u) => u.id === patch.linkedUserId);
+        if (!linkedUser) {
+          return { ok: false, error: "کاربر لینک‌شده یافت نشد." };
+        }
+        const alreadyLinked = state.counterparties.find(
+          (c) => c.id !== id && c.linkedUserId === patch.linkedUserId
+        );
+        if (alreadyLinked) {
+          return {
+            ok: false,
+            error: `کاربر «${linkedUser.displayName}» قبلاً به طرف حساب دیگری لینک شده است.`,
+          };
+        }
+        linkedUsername = linkedUser.username;
+      } else {
+        linkedUsername = null;
+      }
+    }
+    const next: Counterparty = {
+      ...cp,
+      displayName: patch.displayName?.trim() || cp.displayName,
+      notes: patch.notes !== undefined ? patch.notes.trim() || undefined : cp.notes,
+      linkedUserId: patch.linkedUserId !== undefined ? patch.linkedUserId ?? null : cp.linkedUserId,
+      linkedUsername,
+    };
+    const now = new Date().toISOString();
+    const actorName = findActorName(state.users, actorId);
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "UPDATE_COUNTERPARTY",
+      entityType: "Counterparty",
+      entityId: id,
+      result: "success",
+      details: `ویرایش طرف حساب «${cp.displayName}»`,
+      createdAt: now,
+    };
+    set({
+      counterparties: state.counterparties.map((c) => (c.id === id ? next : c)),
+      auditLogs: [log, ...state.auditLogs],
+    });
+    // تطابق‌ها ممکن است تغییر کنند (اگر لینک تغییر کرد)
+    get().recomputeMatches();
+    return { ok: true };
+  },
+
+  deleteCounterparty: async (id, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminDeleteCounterpartyReal(id);
+        await get().loadRealData();
+      } catch (e) {
+        /* بی‌صدا */
+      }
+      return;
+    }
+    const state = get();
+    const cp = state.counterparties.find((c) => c.id === id);
+    if (!cp) return;
+    // جلوگیری از حذف اگر تراکنشی به آن وابسته است
+    const hasTxns = state.transactions.some((t) => t.counterpartyId === id);
+    if (hasTxns) {
+      return; // بی‌صدا رد کن — کامپوننت باید قبل از فراخوانی چک کند
+    }
+    const now = new Date().toISOString();
+    const actorName = findActorName(state.users, actorId);
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "DELETE_COUNTERPARTY",
+      entityType: "Counterparty",
+      entityId: id,
+      result: "success",
+      details: `حذف طرف حساب «${cp.displayName}»`,
+      createdAt: now,
+    };
+    set({
+      counterparties: state.counterparties.filter((c) => c.id !== id),
+      auditLogs: [log, ...state.auditLogs],
+    });
+  },
+
+  // -------------------------------------------------------------------------
+  // تراکنش‌ها
+  // -------------------------------------------------------------------------
+
+  addTransaction: async (input, actorId) => {
+    // ---- real branch ----
+    if (get().realMode) {
+      try {
+        const res = await createTransactionReal(input);
+        await get().loadRealData();
+        return {
+          ok: true,
+          transaction: res.transaction ?? undefined,
+          matchedWith: res.matchedWith,
+        };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const user = state.users.find((u) => u.id === actorId);
+    if (!user) return { ok: false, error: "کاربر احراز هویت‌نشده." };
+
+    // اعتبارسنجی ورودی
+    const v = validateTransactionInput(input);
+    if (!v.ok) {
+      return { ok: false, error: v.error };
+    }
+    // طرف حساب موجود باشد
+    const cp = state.counterparties.find((c) => c.id === input.counterpartyId);
+    if (!cp) {
+      return { ok: false, error: "طرف حساب یافت نشد." };
+    }
+    // جلوگیری از ثبت تراکنش با طرف حسابی که خودِ همین کاربر است
+    if (cp.linkedUserId === actorId) {
+      return {
+        ok: false,
+        error: "نمی‌توان با طرف حسابی که نماینده خودِ شماست تراکنش ثبت کرد.",
       };
-      const secondaryTxn: Transaction = {
-        id: uid("tx"),
-        ledgerId: state.ledger.id,
-        contactId: input.contactId,
-        categoryId: input.categoryId ?? null,
-        transactionType: "PAYABLE_CHARGE",
-        amount: excessAmount,
-        currency: input.currency,
-        effectiveAt: input.effectiveAt,
-        createdAt: now,
-        createdBy: "owner",
-        description: input.description
-          ? `${input.description} (پرداخت اضافه)`
-          : "پرداخت اضافه",
-        status: "POSTED",
-        idempotencyKey: uid("idem"),
-      };
-      const log: AuditLogEntry = {
-        id: uid("audit"),
-        actorId: "owner",
-        action: "CREATE_TXN",
-        entityType: "Transaction",
-        entityId: primaryTxn.id,
-        result: "success",
-        details: `دریافت ${receiptAmount.toLocaleString(
-          "en-US"
-        )} ${input.currency === "IRT" ? "تومان" : "ریال"} + ایجاد بدهی ${excessAmount.toLocaleString(
-          "en-US"
-        )} (پرداخت اضافه) برای ${
-          contact?.displayName ?? "نامشخص"
-        }`,
-        createdAt: now,
-      };
-      set({
-        transactions: [secondaryTxn, primaryTxn, ...state.transactions],
-        auditLogs: [log, ...state.auditLogs],
-      });
-      return { ok: true, transaction: primaryTxn, secondaryTransaction: secondaryTxn };
     }
 
-    if (overpayPayment && input.allowOverpay) {
-      const paymentAmount = outstandingPayable;
-      const excessAmount = input.amount - outstandingPayable;
-      const primaryTxn: Transaction = {
-        id: uid("tx"),
-        ledgerId: state.ledger.id,
-        contactId: input.contactId,
-        categoryId: input.categoryId ?? null,
-        transactionType: "PAYMENT_ALLOCATION",
-        amount: paymentAmount,
-        currency: input.currency,
-        effectiveAt: input.effectiveAt,
-        createdAt: now,
-        createdBy: "owner",
-        description: input.description,
-        status: "POSTED",
-        idempotencyKey: uid("idem"),
-      };
-      const secondaryTxn: Transaction = {
-        id: uid("tx"),
-        ledgerId: state.ledger.id,
-        contactId: input.contactId,
-        categoryId: input.categoryId ?? null,
-        transactionType: "RECEIVABLE_CHARGE",
-        amount: excessAmount,
-        currency: input.currency,
-        effectiveAt: input.effectiveAt,
-        createdAt: now,
-        createdBy: "owner",
-        description: input.description
-          ? `${input.description} (پرداخت اضافه)`
-          : "پرداخت اضافه",
-        status: "POSTED",
-        idempotencyKey: uid("idem"),
-      };
-      const log: AuditLogEntry = {
-        id: uid("audit"),
-        actorId: "owner",
-        action: "CREATE_TXN",
-        entityType: "Transaction",
-        entityId: primaryTxn.id,
-        result: "success",
-        details: `پرداخت ${paymentAmount.toLocaleString(
-          "en-US"
-        )} ${input.currency === "IRT" ? "تومان" : "ریال"} + ایجاد طلب ${excessAmount.toLocaleString(
-          "en-US"
-        )} (پرداخت اضافه) برای ${
-          contact?.displayName ?? "نامشخص"
-        }`,
-        createdAt: now,
-      };
-      set({
-        transactions: [secondaryTxn, primaryTxn, ...state.transactions],
-        auditLogs: [log, ...state.auditLogs],
-      });
-      return { ok: true, transaction: primaryTxn, secondaryTransaction: secondaryTxn };
-    }
-
-    // حالت عادی (بدون overpay)
+    const now = new Date().toISOString();
     const txn: Transaction = {
       id: uid("tx"),
-      ledgerId: state.ledger.id,
-      contactId: input.contactId,
-      categoryId: input.categoryId ?? null,
-      transactionType: input.transactionType,
+      userId: actorId,
+      counterpartyId: input.counterpartyId,
+      direction: input.direction,
       amount: input.amount,
       currency: input.currency,
       effectiveAt: input.effectiveAt,
       createdAt: now,
-      createdBy: "owner",
-      description: input.description,
+      createdBy: actorId,
+      description: input.description?.trim() || undefined,
       status: "POSTED",
+      matchedTransactionId: null,
+      matchStatus: "pending",
       idempotencyKey: uid("idem"),
     };
 
-    const successLog: AuditLogEntry = {
+    // افزودن و سپس محاسبه تطابق‌ها
+    set({ transactions: [txn, ...state.transactions] });
+    get().recomputeMatches();
+
+    // پیدا کردن تراکنش تطبیق‌یافته (پس از recompute)
+    const updated = get().transactions.find((t) => t.id === txn.id);
+    const matchedWith = updated?.matchedTransactionId
+      ? get().transactions.find((t) => t.id === updated.matchedTransactionId) ??
+        null
+      : null;
+
+    // گزارش ممیزی
+    const actorName = findActorName(state.users, actorId);
+    const cpName = cp.displayName;
+    const dirLabel =
+      input.direction === "received_from" ? "دریافت از" : "پرداخت به";
+    const matchInfo = updated?.matchStatus;
+    const matchDetail =
+      matchInfo === "matched"
+        ? ` — تطبیق‌یافته با سمت ${cp.linkedUsername ?? "طرف مقابل"}`
+        : matchInfo === "pending"
+        ? " — در انتظار ثبت توسط طرف مقابل"
+        : "";
+    const log: AuditLogEntry = {
       id: uid("audit"),
-      actorId: "owner",
+      actorId,
+      actorName,
       action: "CREATE_TXN",
       entityType: "Transaction",
       entityId: txn.id,
       result: "success",
-      details: `ثبت تراکنش ${input.amount.toLocaleString(
+      details: `ثبت «${dirLabel} ${cpName} — ${input.amount.toLocaleString(
         "en-US"
-      )} ${input.currency === "IRT" ? "تومان" : "ریال"} برای ${
-        contact?.displayName ?? "نامشخص"
-      }`,
+      )} تومان در ${input.effectiveAt}»${matchDetail}`,
       createdAt: now,
     };
+    set({ auditLogs: [log, ...get().auditLogs] });
 
-    set({
-      transactions: [txn, ...state.transactions],
-      auditLogs: [successLog, ...state.auditLogs],
-    });
-
-    return { ok: true, transaction: txn };
+    return { ok: true, transaction: updated ?? txn, matchedWith };
   },
 
-  addCategory: async (name) => {
+  // -------------------------------------------------------------------------
+  // داخلی
+  // -------------------------------------------------------------------------
+
+  recomputeMatches: () => {
     const state = get();
+    const { transactions, counterparties } = state;
+    const updated = transactions.map((t) => {
+      const result = computeMatchStatus(t, transactions, counterparties);
+      return {
+        ...t,
+        matchStatus: result.status,
+        matchedTransactionId: result.matchedId,
+      };
+    });
+    set({ transactions: updated });
+  },
 
-    // حالت real
-    if (state.realMode && state.realLedgerId) {
-      const cat = await addCategoryToSupabase(state.realLedgerId, name);
-      if (cat) {
-        set({ categories: [...state.categories, cat] });
-        return cat;
-      }
-      return null;
-    }
-
-    // حالت mock
-    const cat: Category = {
-      id: uid("cat"),
-      ledgerId: state.ledger.id,
-      name: name.trim(),
-      isActive: true,
-      sortOrder: state.categories.length + 1,
+  logAction: (actorId, action, entityType, entityId, result, details) => {
+    const state = get();
+    const actorName = findActorName(state.users, actorId);
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action,
+      entityType,
+      entityId,
+      result,
+      details,
       createdAt: new Date().toISOString(),
     };
-    const log: AuditLogEntry = {
-      id: uid("audit"),
-      actorId: "owner",
-      action: "ADD_CATEGORY",
-      entityType: "Category",
-      entityId: cat.id,
-      result: "success",
-      details: `افزودن سرفصل «${name}»`,
-      createdAt: cat.createdAt,
-    };
-    set({
-      categories: [...state.categories, cat],
-      auditLogs: [log, ...state.auditLogs],
-    });
-    return cat;
-  },
-
-  deactivateCategory: (id) => {
-    const state = get();
-    const cat = state.categories.find((c) => c.id === id);
-    if (!cat) return;
-    const updated: Category = {
-      ...cat,
-      isActive: false,
-      archivedAt: new Date().toISOString(),
-    };
-    const log: AuditLogEntry = {
-      id: uid("audit"),
-      actorId: "owner",
-      action: "DEACTIVATE_CATEGORY",
-      entityType: "Category",
-      entityId: id,
-      result: "success",
-      details: `غیرفعال‌سازی سرفصل «${cat.name}»`,
-      createdAt: updated.archivedAt!,
-    };
-    set({
-      categories: state.categories.map((c) => (c.id === id ? updated : c)),
-      auditLogs: [log, ...state.auditLogs],
-    });
-  },
-
-  addContact: async (name, notes) => {
-    const state = get();
-
-    // حالت real
-    if (state.realMode && state.realLedgerId) {
-      const contact = await addContactToSupabase(
-        state.realLedgerId,
-        name,
-        notes
-      );
-      if (contact) {
-        set({ contacts: [...state.contacts, contact] });
-        return contact;
-      }
-      return null;
-    }
-
-    // حالت mock
-    const contact: Contact = {
-      id: uid("contact"),
-      ledgerId: state.ledger.id,
-      displayName: name.trim(),
-      notes: notes?.trim() || undefined,
-      linkedTelegramId: null,
-      linkedProfileId: null,
-      createdAt: new Date().toISOString(),
-    };
-    const log: AuditLogEntry = {
-      id: uid("audit"),
-      actorId: "owner",
-      action: "ADD_CONTACT",
-      entityType: "Contact",
-      entityId: contact.id,
-      result: "success",
-      details: `افزودن طرف حساب «${name}»`,
-      createdAt: contact.createdAt,
-    };
-    set({
-      contacts: [...state.contacts, contact],
-      auditLogs: [log, ...state.auditLogs],
-    });
-    return contact;
-  },
-
-  generateLinkCode: async (contactId, scope) => {
-    const state = get();
-    const contact = state.contacts.find((c) => c.id === contactId);
-    if (!contact) return null;
-
-    // حالت real
-    if (state.realMode && state.realLedgerId) {
-      const result = await generateLinkCodeInSupabase(
-        state.realLedgerId,
-        contactId,
-        scope
-      );
-      if (!result) return null;
-      const linkCode: LinkCode = {
-        code: result.code,
-        contactId,
-        scope,
-        expiresAt: result.expiresAt,
-        used: false,
-        createdAt: new Date().toISOString(),
-      };
-      const log: AuditLogEntry = {
-        id: uid("audit"),
-        actorId: "owner",
-        action: "GENERATE_LINK_CODE",
-        entityType: "Contact",
-        entityId: contactId,
-        result: "success",
-        details: `تولید کد اتصال تلگرام برای «${contact.displayName}»`,
-        createdAt: linkCode.createdAt,
-      };
-      set({
-        linkCodes: [linkCode, ...state.linkCodes],
-        auditLogs: [log, ...state.auditLogs],
-      });
-      return linkCode;
-    }
-
-    // حالت mock
-    const now = Date.now();
-    const linkCode: LinkCode = {
-      code: makeLinkCode(),
-      contactId,
-      scope,
-      expiresAt: new Date(now + 10 * 60 * 1000).toISOString(),
-      used: false,
-      createdAt: new Date(now).toISOString(),
-    };
-    const log: AuditLogEntry = {
-      id: uid("audit"),
-      actorId: "owner",
-      action: "GENERATE_LINK_CODE",
-      entityType: "Contact",
-      entityId: contactId,
-      result: "success",
-      details: `تولید کد اتصال تلگرام برای «${contact.displayName}» (دسترسی: ${
-        scope === "balance_only"
-          ? "فقط مانده"
-          : scope === "transaction_list"
-          ? "فهرست تراکنش‌ها"
-          : scope === "transaction_details"
-          ? "جزئیات تراکنش‌ها"
-          : "گزارش سرفصلی"
-      })`,
-      createdAt: linkCode.createdAt,
-    };
-    set({
-      linkCodes: [linkCode, ...state.linkCodes],
-      auditLogs: [log, ...state.auditLogs],
-    });
-    return linkCode;
-  },
-
-  revokeTelegramLink: async (id) => {
-    const state = get();
-    const link = state.telegramLinks.find((l) => l.id === id);
-    if (!link) return;
-
-    // حالت real
-    if (state.realMode) {
-      const ok = await revokeTelegramLinkInSupabase(id);
-      if (!ok) return;
-    }
-
-    const updated: TelegramLink = {
-      ...link,
-      status: "revoked",
-      revokedAt: new Date().toISOString(),
-    };
-    const contact = state.contacts.find((c) => c.id === link.contactId);
-    const log: AuditLogEntry = {
-      id: uid("audit"),
-      actorId: "owner",
-      action: "REVOKE_TELEGRAM_LINK",
-      entityType: "TelegramLink",
-      entityId: id,
-      result: "success",
-      details: `لغو اتصال تلگرام «${
-        contact?.displayName ?? link.telegramUsername ?? "نامشخص"
-      }»`,
-      createdAt: updated.revokedAt!,
-    };
-    set({
-      telegramLinks: state.telegramLinks.map((l) =>
-        l.id === id ? updated : l
-      ),
-      auditLogs: [log, ...state.auditLogs],
-    });
+    set({ auditLogs: [log, ...state.auditLogs] });
   },
 }));
+
+// ---------------------------------------------------------------------------
+// انتخابگرهای کمکی (pure functions — نه hook)
+// ---------------------------------------------------------------------------
+
+// کاربر فعلی بر اساس currentUserId
+export function selectCurrentUser(state: AccountingState): User | null {
+  if (!state.currentUserId) return null;
+  return state.users.find((u) => u.id === state.currentUserId) ?? null;
+}
+
+// تراکنش‌های دفتر یک کاربر (مرتب بر اساس تاریخ شمسی نزولی)
+export function selectUserTransactions(
+  state: AccountingState,
+  userId: string
+): Transaction[] {
+  return state.transactions
+    .filter((t) => t.userId === userId)
+    .slice()
+    .sort((a, b) => {
+      // نزولی بر اساس effectiveAt شمسی (رشته‌ای قابل مرتب‌سازی است)
+      if (a.effectiveAt !== b.effectiveAt) {
+        return b.effectiveAt.localeCompare(a.effectiveAt);
+      }
+      // اگر تاریخ برابر، بر اساس زمان ثبت نزولی
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+
+// یافتن طرف حساب با id
+export function selectCounterparty(
+  state: AccountingState,
+  id: string
+): Counterparty | undefined {
+  return state.counterparties.find((c) => c.id === id);
+}
+
+// یافتن کاربر با id
+export function selectUser(
+  state: AccountingState,
+  id: string
+): User | undefined {
+  return state.users.find((u) => u.id === id);
+}
+
+// وضعیت تطابق برچسب‌خورده برای نمایش
+export function matchStatusLabel(status: MatchStatus): string {
+  if (status === "matched") return "تطبیق‌یافته";
+  if (status === "pending") return "در انتظار طرف مقابل";
+  return "شخص عادی";
+}
+
+// صادرات کمکی برای استفاده در کامپوننت‌ها
+export type { Transaction, User, Counterparty };
+export { isMatchingPair };

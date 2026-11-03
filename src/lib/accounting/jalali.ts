@@ -129,6 +129,49 @@ export function todayISO(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+// ---------------------------------------------------------------------------
+// توابع برای رشته‌های شمسی ذخیره‌شده (مثل "1405-08-04")
+// در این نسخه، effectiveAt تراکنش به‌صورت رشته شمسی yyyy-mm-dd ذخیره می‌شود.
+// ---------------------------------------------------------------------------
+
+// parse یک رشته شمسی "1405-08-04" → {jy:1405, jm:8, jd:4}
+export function parseShamsiString(s: string): JalaliDate | null {
+  if (!s) return null;
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const jy = parseInt(m[1], 10);
+  const jm = parseInt(m[2], 10);
+  const jd = parseInt(m[3], 10);
+  if (jm < 1 || jm > 12 || jd < 1 || jd > 31) return null;
+  return { jy, jm, jd };
+}
+
+// "1405-08-04" → "۱۴۰۵/۰۸/۰۴"
+export function formatShamsiShort(s: string): string {
+  const j = parseShamsiString(s);
+  if (!j) return s;
+  const mm = String(j.jm).padStart(2, "0");
+  const dd = String(j.jd).padStart(2, "0");
+  return `${toPersianDigits(j.jy)}/${toPersianDigits(mm)}/${toPersianDigits(dd)}`;
+}
+
+// "1405-08-04" → "۴ آبان ۱۴۰۵"
+export function formatShamsiLong(s: string): string {
+  const j = parseShamsiString(s);
+  if (!j) return s;
+  return `${toPersianDigits(j.jd)} ${PERSIAN_MONTHS[j.jm - 1]} ${toPersianDigits(
+    j.jy
+  )}`;
+}
+
+// امروز به رشته شمسی "yyyy-mm-dd" (لاتین، برای ذخیره‌سازی)
+export function todayShamsiString(): string {
+  const { jy, jm, jd } = todayJalali();
+  const mm = String(jm).padStart(2, "0");
+  const dd = String(jd).padStart(2, "0");
+  return `${jy}-${mm}-${dd}`;
+}
+
 // قالب‌بندی مبلغ با جداکننده هزارگان و ارقام فارسی
 export function formatAmount(
   amount: number,

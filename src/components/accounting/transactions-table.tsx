@@ -1,11 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowDownCircle, ArrowUpCircle, Filter } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import {
+  Search,
+  Link2,
+  CheckCircle2,
+  Clock,
+  User as UserIcon,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Receipt,
+  LinkIcon,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -13,202 +22,394 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAccountingStore } from "@/store/accounting-store";
 import {
-  TRANSACTION_TYPE_LABELS,
-  TransactionType,
+  Card,
+  CardContent,
+} from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useAccountingStore, selectUserTransactions } from "@/store/accounting-store";
+import {
+  DIRECTION_LABELS,
+  type MatchStatus,
 } from "@/lib/accounting/types";
 import {
-  formatAmount,
-  formatJalaliFull,
+  formatShamsiLong,
+  formatShamsiShort,
   toPersianDigits,
 } from "@/lib/accounting/jalali";
-import { cn } from "@/lib/utils";
 
-interface TransactionsTableProps {
-  filterContactId?: string | null;
-  onClearContactFilter?: () => void;
-}
+const STATUS_FILTERS: { value: string; label: string }[] = [
+  { value: "all", label: "همه" },
+  { value: "matched", label: "تطبیق‌یافته" },
+  { value: "pending", label: "در انتظار" },
+  { value: "unmatched", label: "شخص عادی" },
+];
 
-export function TransactionsTable({
-  filterContactId,
-  onClearContactFilter,
-}: TransactionsTableProps) {
+export function TransactionsTable() {
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const users = useAccountingStore((s) => s.users);
+  const counterparties = useAccountingStore((s) => s.counterparties);
   const transactions = useAccountingStore((s) => s.transactions);
-  const contacts = useAccountingStore((s) => s.contacts);
-  const categories = useAccountingStore((s) => s.categories);
 
-  const [typeFilter, setTypeFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [cpFilter, setCpFilter] = useState("all");
+  const [dirFilter, setDirFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
+  const currentUser = users.find((u) => u.id === currentUserId);
+
+  // تراکنش‌های دفتر کاربر فعلی، مرتب‌شده
+  const myTxns = useMemo(() => {
+    if (!currentUserId) return [];
+    const state = useAccountingStore.getState();
+    return selectUserTransactions(state, currentUserId);
+  }, [currentUserId, transactions]);
+
+  // فیلتر
   const filtered = useMemo(() => {
-    return transactions
-      .filter((t) => {
-        if (filterContactId && t.contactId !== filterContactId) return false;
-        if (typeFilter !== "all" && t.transactionType !== typeFilter)
-          return false;
-        if (search) {
-          const contact = contacts.find((c) => c.id === t.contactId);
-          const haystack = `${contact?.displayName ?? ""} ${
-            t.description ?? ""
-          }`.toLowerCase();
-          if (!haystack.includes(search.toLowerCase())) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        // مرتب‌سازی بر اساس تاریخ مؤثر (نزولی)
-        if (a.effectiveAt !== b.effectiveAt) {
-          return a.effectiveAt > b.effectiveAt ? -1 : 1;
-        }
-        return a.createdAt > b.createdAt ? -1 : 1;
-      });
-  }, [transactions, contacts, filterContactId, typeFilter, search]);
+    return myTxns.filter((t) => {
+      if (cpFilter !== "all" && t.counterpartyId !== cpFilter) return false;
+      if (dirFilter !== "all" && t.direction !== dirFilter) return false;
+      if (statusFilter !== "all" && t.matchStatus !== statusFilter) return false;
+      if (search.trim()) {
+        const cp = counterparties.find((c) => c.id === t.counterpartyId);
+        const hay = `${cp?.displayName ?? ""} ${t.description ?? ""} ${t.effectiveAt}`;
+        if (!hay.includes(search.trim())) return false;
+      }
+      return true;
+    });
+  }, [myTxns, cpFilter, dirFilter, statusFilter, search, counterparties]);
+
+  // گروه‌بندی: زوج‌های تطبیق‌یافته را یک‌بار نمایش بده (نه دو بار)
+  const rendered: React.ReactNode[] = [];
+  const shownIds = new Set<string>();
+
+  for (const t of filtered) {
+    if (shownIds.has(t.id)) continue;
+
+    if (t.matchStatus === "matched" && t.matchedTransactionId) {
+      const partner = transactions.find((x) => x.id === t.matchedTransactionId);
+      if (partner) {
+        shownIds.add(t.id);
+        shownIds.add(partner.id);
+        rendered.push(
+          <MatchedPairCard
+            key={`pair-${t.id}`}
+            mine={t}
+            partner={partner}
+            currentUser={currentUser}
+          />
+        );
+        continue;
+      }
+    }
+    shownIds.add(t.id);
+    rendered.push(
+      <SingleTxnCard
+        key={t.id}
+        txn={t}
+        currentUser={currentUser}
+      />
+    );
+  }
+
+  if (!currentUserId || !currentUser) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center text-sm text-muted-foreground">
+          برای مشاهده تراکنش‌ها وارد شوید.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // اگر scope فقط مانده است، کاربر نمی‌تواند تراکنش‌ها را ببیند
+  if (currentUser.role === "user" && currentUser.scope === "balance_only") {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center space-y-2">
+          <UserIcon className="h-8 w-8 text-muted-foreground mx-auto" />
+          <div className="text-sm font-medium">دسترسی محدود</div>
+          <div className="text-xs text-muted-foreground">
+            سطح دسترسی شما («فقط مشاهده مانده») اجازه مشاهده تراکنش‌ها را
+            نمی‌دهد. فقط مانده کل طرف حساب‌ها در داشبورد قابل مشاهده است.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base flex-wrap">
-          <Filter className="h-4 w-4" />
-          تراکنش‌ها
-          <Badge variant="secondary" className="mr-auto">
-            {toPersianDigits(filtered.length)} رکورد
-          </Badge>
-        </CardTitle>
-        <div className="flex flex-wrap items-center gap-2 mt-2">
-          {filterContactId && (
-            <Badge
-              variant="secondary"
-              className="bg-primary/10 text-primary"
-            >
-              طرف حساب:{" "}
-              {contacts.find((c) => c.id === filterContactId)?.displayName}
-              <button
-                type="button"
-                className="mr-1 hover:text-destructive"
-                onClick={onClearContactFilter}
-                aria-label="پاک کردن فیلتر طرف حساب"
-              >
-                ✕
-              </button>
-            </Badge>
-          )}
+    <div className="space-y-4">
+      {/* فیلترها */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className="relative sm:col-span-2 lg:col-span-1">
+          <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="جستجو در توضیحات یا نام..."
+            placeholder="جستجو..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="max-w-xs h-8 text-sm"
+            className="pr-8 h-9"
           />
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-[200px] h-8 text-sm">
-              <SelectValue placeholder="همه انواع" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">همه انواع</SelectItem>
-              {(
-                Object.entries(TRANSACTION_TYPE_LABELS) as [
-                  TransactionType,
-                  string
-                ][]
-              ).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        <ScrollArea className="h-[420px]">
-          {filtered.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground py-12">
-              تراکنشی یافت نشد.
-            </div>
-          ) : (
-            <ul className="divide-y divide-border">
-              {filtered.map((t) => {
-                const contact = contacts.find((c) => c.id === t.contactId);
-                const category = t.categoryId
-                  ? categories.find((c) => c.id === t.categoryId)
-                  : null;
-                const isReceivableSide =
-                  t.transactionType === "RECEIVABLE_CHARGE" ||
-                  t.transactionType === "OPENING_RECEIVABLE" ||
-                  t.transactionType === "RECEIPT_ALLOCATION";
-                const isIncreasing =
-                  t.transactionType === "RECEIVABLE_CHARGE" ||
-                  t.transactionType === "OPENING_RECEIVABLE" ||
-                  t.transactionType === "PAYABLE_CHARGE" ||
-                  t.transactionType === "OPENING_PAYABLE";
-                return (
-                  <li
-                    key={t.id}
-                    className="px-3 py-3 hover:bg-accent/40 transition-colors"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className={cn(
-                          "mt-0.5 h-8 w-8 rounded-full flex items-center justify-center shrink-0",
-                          isReceivableSide
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                            : "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-                        )}
-                      >
-                        {isReceivableSide ? (
-                          <ArrowDownCircle className="h-4 w-4" />
-                        ) : (
-                          <ArrowUpCircle className="h-4 w-4" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 flex-wrap">
-                          <div className="min-w-0">
-                            <div className="font-medium text-sm">
-                              {contact?.displayName ?? "نامشخص"}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-0.5">
-                              {TRANSACTION_TYPE_LABELS[t.transactionType]}
-                              {category && (
-                                <>
-                                  {" • "}
-                                  {category.name}
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          <div
-                            className={cn(
-                              "font-bold text-sm persian-nums whitespace-nowrap",
-                              isReceivableSide
-                                ? "text-emerald-700 dark:text-emerald-300"
-                                : "text-rose-700 dark:text-rose-300"
-                            )}
-                          >
-                            {isIncreasing ? "+" : "−"}
-                            {formatAmount(t.amount, t.currency)}
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 mt-1.5 flex-wrap">
-                          <div className="text-xs text-muted-foreground">
-                            {formatJalaliFull(t.effectiveAt)}
-                          </div>
-                          {t.description && (
-                            <div className="text-xs text-foreground/70 truncate max-w-[60%]">
-                              {t.description}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+        <Select value={cpFilter} onValueChange={setCpFilter}>
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="طرف حساب" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">همه طرف حساب‌ها</SelectItem>
+            {counterparties.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.displayName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={dirFilter} onValueChange={setDirFilter}>
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="نوع" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">هر دو نوع</SelectItem>
+            <SelectItem value="received_from">دریافت از</SelectItem>
+            <SelectItem value="paid_to">پرداخت به</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-9">
+            <SelectValue placeholder="وضعیت تطابق" />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_FILTERS.map((s) => (
+              <SelectItem key={s.value} value={s.value}>
+                {s.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* شمارش نتایج */}
+      <div className="text-xs text-muted-foreground">
+        {toPersianDigits(filtered.length.toString())} رکورد از{" "}
+        {toPersianDigits(myTxns.length.toString())} تراکنش
+      </div>
+
+      {/* فهرست */}
+      {filtered.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            <Receipt className="h-8 w-8 mx-auto mb-2 opacity-40" />
+            تراکنشی یافت نشد.
+          </CardContent>
+        </Card>
+      ) : (
+        <ScrollArea className="max-h-[60vh]">
+          <div className="space-y-3 pr-1">{rendered}</div>
         </ScrollArea>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// کارت زوج تطبیق‌یافته — دو رکورد کنار هم
+// ---------------------------------------------------------------------------
+
+function MatchedPairCard({
+  mine,
+  partner,
+  currentUser,
+}: {
+  mine: import("@/lib/accounting/types").Transaction;
+  partner: import("@/lib/accounting/types").Transaction;
+  currentUser: import("@/lib/accounting/types").User | undefined;
+}) {
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const users = useAccountingStore((s) => s.users);
+
+  const myCp = counterparties.find((c) => c.id === mine.counterpartyId);
+  const partnerCp = counterparties.find((c) => c.id === partner.counterpartyId);
+  const partnerUser = users.find((u) => u.id === partner.userId);
+
+  return (
+    <Card className="overflow-hidden border-emerald-300/60 dark:border-emerald-800/60">
+      {/* نوار بالایی زوج */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50/70 dark:bg-emerald-950/20 border-b border-emerald-200/50 dark:border-emerald-900/50">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          تطبیق‌یافته ✓
+        </div>
+        <div className="text-xs text-muted-foreground" dir="ltr">
+          {formatShamsiShort(mine.effectiveAt)}
+        </div>
+      </div>
+      <CardContent className="p-0">
+        {/* رکورد شما */}
+        <TxnRow
+          txn={mine}
+          cp={myCp}
+          ownerLabel={`${currentUser?.displayName ?? "شما"} (شما)`}
+          isMine
+        />
+        {/* خط ارتباطی */}
+        <div className="flex items-center justify-center py-1 bg-muted/30">
+          <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+            <LinkIcon className="h-3 w-3" />
+            تطبیق داده شد
+          </div>
+        </div>
+        {/* رکورد طرف مقابل */}
+        <TxnRow
+          txn={partner}
+          cp={partnerCp}
+          ownerLabel={`${partnerUser?.displayName ?? "طرف مقابل"} (طرف مقابل)`}
+          isMine={false}
+        />
+        {/* توضیح مشترک */}
+        {(mine.description || partner.description) && (
+          <div className="px-3 py-2 border-t bg-muted/20 text-xs text-muted-foreground space-y-1">
+            {mine.description && (
+              <div>
+                <span className="font-medium">یادداشت شما:</span> {mine.description}
+              </div>
+            )}
+            {partner.description && (
+              <div>
+                <span className="font-medium">یادداشت طرف مقابل:</span>{" "}
+                {partner.description}
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// کارت تک‌رکوردی (pending یا unmatched)
+// ---------------------------------------------------------------------------
+
+function SingleTxnCard({
+  txn,
+  currentUser,
+}: {
+  txn: import("@/lib/accounting/types").Transaction;
+  currentUser: import("@/lib/accounting/types").User | undefined;
+}) {
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const cp = counterparties.find((c) => c.id === txn.counterpartyId);
+
+  const isPending = txn.matchStatus === "pending";
+
+  return (
+    <Card
+      className={
+        isPending
+          ? "overflow-hidden border-amber-300/60 dark:border-amber-800/60"
+          : "overflow-hidden"
+      }
+    >
+      {isPending ? (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-50/70 dark:bg-amber-950/20 border-b border-amber-200/50 dark:border-amber-900/50">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
+            <Clock className="h-3.5 w-3.5" />
+            در انتظار طرف مقابل
+          </div>
+          <div className="text-xs text-muted-foreground" dir="ltr">
+            {formatShamsiShort(txn.effectiveAt)}
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/30 border-b">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <UserIcon className="h-3.5 w-3.5" />
+            طرف حساب شخص عادی
+          </div>
+          <div className="text-xs text-muted-foreground" dir="ltr">
+            {formatShamsiShort(txn.effectiveAt)}
+          </div>
+        </div>
+      )}
+      <CardContent className="p-0">
+        <TxnRow
+          txn={txn}
+          cp={cp}
+          ownerLabel={`${currentUser?.displayName ?? "شما"} (شما)`}
+          isMine
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// یک ردیف تراکنش
+// ---------------------------------------------------------------------------
+
+function TxnRow({
+  txn,
+  cp,
+  ownerLabel,
+  isMine,
+}: {
+  txn: import("@/lib/accounting/types").Transaction;
+  cp: import("@/lib/accounting/types").Counterparty | undefined;
+  ownerLabel: string;
+  isMine: boolean;
+}) {
+  const isReceived = txn.direction === "received_from";
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div
+          className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
+            isReceived
+              ? "bg-emerald-100 dark:bg-emerald-950/40"
+              : "bg-rose-100 dark:bg-rose-950/40"
+          }`}
+        >
+          {isReceived ? (
+            <ArrowDownLeft className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          ) : (
+            <ArrowUpRight className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+          )}
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-muted-foreground">
+              {DIRECTION_LABELS[txn.direction]}
+            </span>
+            <span className="font-medium truncate">{cp?.displayName ?? "نامشخص"}</span>
+            {cp?.linkedUserId && (
+              <Badge
+                variant="outline"
+                className="h-4 px-1 text-[9px] gap-0.5 border-emerald-300 text-emerald-700"
+              >
+                <Link2 className="h-2 w-2" />
+                {cp.linkedUsername}
+              </Badge>
+            )}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-0.5">
+            {ownerLabel}
+          </div>
+        </div>
+      </div>
+      <div className="text-left shrink-0">
+        <div
+          className={`font-bold dir-ltr ${
+            isReceived
+              ? "text-emerald-700 dark:text-emerald-300"
+              : "text-rose-700 dark:text-rose-300"
+          }`}
+          dir="ltr"
+        >
+          {toPersianDigits(txn.amount.toLocaleString("en-US"))}
+        </div>
+        <div className="text-[10px] text-muted-foreground">تومان</div>
+      </div>
+    </div>
   );
 }
