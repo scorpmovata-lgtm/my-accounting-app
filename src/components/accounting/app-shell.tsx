@@ -30,6 +30,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useAccountingStore } from "@/store/accounting-store";
 import { toPersianDigits } from "@/lib/accounting/jalali";
+import { APP_VERSION } from "@/lib/version";
 import { useToast } from "@/hooks/use-toast";
 import { LoginScreen } from "./login-screen";
 import { DashboardPanel } from "./dashboard-panel";
@@ -38,8 +39,15 @@ import { TransactionFormDialog } from "./transaction-form-dialog";
 import { AdminTab } from "./admin-tab";
 import { SetupTab } from "./setup-tab";
 import { TelegramLinkPanel } from "./telegram-link-panel";
+import { PersonalSettingsPanel } from "./categories-panel";
 
-type TabValue = "dashboard" | "transactions" | "telegram" | "admin" | "setup";
+type TabValue =
+  | "dashboard"
+  | "transactions"
+  | "telegram"
+  | "personal"
+  | "admin"
+  | "setup";
 
 interface NavItem {
   value: TabValue;
@@ -67,9 +75,15 @@ const ALL_NAV_ITEMS: NavItem[] = [
     icon: Send,
   },
   {
-    value: "admin",
-    label: "مدیریت",
+    value: "personal",
+    label: "تنظیمات من",
     icon: Settings,
+    hiddenForBalanceOnly: true,
+  },
+  {
+    value: "admin",
+    label: "مدیریت سامانه",
+    icon: ShieldCheck,
     adminOnly: true,
   },
   {
@@ -169,6 +183,9 @@ export function AppShell() {
       break;
     case "telegram":
       activeContent = <TelegramLinkPanel />;
+      break;
+    case "personal":
+      activeContent = <PersonalSettingsPanel />;
       break;
     case "admin":
       activeContent = <AdminTab />;
@@ -294,14 +311,16 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6 pb-24">
+      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6">
         {activeContent}
       </main>
 
-      {/* منوی پایین صفحه */}
+      {/* منوی پایین صفحه — sticky (نه fixed): هنگام اسکرول به پایین صفحه می‌چسبد،
+          اما در انتهای صفحه در جای طبیعی خودش (بالای فوتر) می‌نشیند و
+          هرگز فوتر یا آخرین ردیف محتوا را نمی‌پوشاند */}
       {!isBalanceOnly && (
         <nav
-          className="fixed bottom-0 inset-x-0 z-50 border-t bg-card/95 backdrop-blur-md"
+          className="sticky bottom-0 z-50 border-t bg-card/95 backdrop-blur-md"
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label="منوی دسترسی سریع"
         >
@@ -352,9 +371,13 @@ export function AppShell() {
 
       <footer className="border-t bg-card/80 backdrop-blur-sm mt-auto">
         <div className="mx-auto max-w-6xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <div>دفتر حسابداری — نسخه {toPersianDigits("2.0")} (چندکاربری)</div>
+          <div>
+            دفتر حسابداری — نسخه {toPersianDigits(APP_VERSION)} (دفتر مستقل + دید دوجانبه)
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span>تطابق خودکار بین‌کاربری</span>
+            <span>کامنت‌های دوطرفه روی تراکنش‌ها</span>
+            <span aria-hidden>•</span>
+            <span>دسته‌بندی شخصی</span>
             <span aria-hidden>•</span>
             <span>تقویم شمسی</span>
           </div>

@@ -1,5 +1,6 @@
 // supabase/functions/admin-users/index.ts
-// مدیریت کاربران توسط ادمین: GET (لیست) / POST (ایجاد) / PUT (ویرایش) / DELETE (حذف)
+// مدیریت کاربران توسط ادمین: GET (لیست) / POST (ایجاد) / PUT (ویرایش + فعال/غیرفعال) / DELETE (حذف)
+// نسخه ۳.۰ — ستون is_active اضافه شد
 // Deploy: supabase functions deploy admin-users
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -35,9 +36,11 @@ async function requireAdmin(req) {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
   );
   const { data: prof } = await admin
-    .from("user_profiles").select("role").eq("id", user.id).maybeSingle();
+    .from("user_profiles").select("role, is_active").eq("id", user.id).maybeSingle();
   if (!prof || prof.role !== "admin")
     return { error: json({ error: "فقط ادمین دسترسی دارد" }, 403) };
+  if (prof.is_active === false)
+    return { error: json({ error: "حساب ادمین شما غیرفعال شده است" }, 403) };
   return { user, admin };
 }
 
@@ -86,7 +89,7 @@ Deno.serve(async (req) => {
     });
     if (authErr) return json({ error: authErr.message }, 500);
 
-    // درج پروفایل
+    // درج پروفایل (is_active پیش‌فرض true)
     const { error: profErr } = await admin.from("user_profiles").insert({
       id: newUser.user.id,
       username,
@@ -96,12 +99,13 @@ Deno.serve(async (req) => {
     });
     if (profErr) return json({ error: profErr.message }, 500);
 
-    // ایجاد طرف حساب هم‌نام و لینک (اگر خواسته شده)
+    // ایجاد طرف حساب هم‌نام (مشترک) و لینک (اگر خواسته شده)
     if (makeCounterparty) {
       const { data: cp } = await admin.from("counterparties").insert({
         display_name: displayName,
         linked_user_id: newUser.user.id,
         linked_username: username,
+        is_shared: true,
         created_by: actor.id,
       }).select().single();
       if (cp) {
@@ -122,7 +126,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, userId: newUser.user.id });
   }
 
-  // PUT → ویرایش
+  // PUT → ویرایش (نام/سطح/رمز + فعال/غیرفعال)
   if (req.method === "PUT") {
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
@@ -131,6 +135,7 @@ Deno.serve(async (req) => {
     const patch = {};
     if (b.displayName) patch.display_name = b.displayName.trim();
     if (b.scope) patch.scope = b.scope;
+    if (b.isActive !== undefined) patch.is_active = !!b.isActive;
     if (Object.keys(patch).length) {
       const { error } = await admin.from("user_profiles").update(patch).eq("id", id);
       if (error) return json({ error: error.message }, 500);
@@ -146,7 +151,9 @@ Deno.serve(async (req) => {
       entity_type: "User",
       entity_id: id,
       result: "success",
-      details: "ویرایش کاربر",
+      details:
+        "ویرایش کاربر" +
+        (b.isActive !== undefined ? (b.isActive ? " — فعال شد" : " — غیرفعال شد") : ""),
     });
     return json({ ok: true });
   }
@@ -156,7 +163,7 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "id الزامی" }, 400);
-    if (id === actor.id) return json({ error: "نمی‌توان خودتان را حذف کنید" }, 400);
+    if (id === actor.id) return json({ error: "نمی‌توانید خودتان را حذف کنید" }, 400);
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) return json({ error: error.message }, 500);
     await admin.from("audit_logs").insert({

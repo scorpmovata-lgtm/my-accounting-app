@@ -14,6 +14,11 @@ import {
   KeyRound,
   CheckCircle2,
   AlertCircle,
+  UserCheck,
+  UserX,
+  Lock,
+  Share2,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,13 +77,14 @@ export function AdminTab() {
       <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/60 dark:border-emerald-900/50 dark:bg-emerald-950/20 p-3 flex items-start gap-2">
         <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
         <div className="text-sm text-emerald-800 dark:text-emerald-300">
-          پنل مدیریت — شما به‌عنوان ادمین، کاربران سامانه و طرف حساب‌های
-          متمرکز را ایجاد/ویرایش می‌کنید. طرف حساب‌ها برای همه کاربران یکسان
-          هستند و می‌توانند به یک کاربر سامانه لینک شوند.
+          پنل مدیریت سامانه — کاربران، دسترسی طرف‌حساب‌های مشترک، فعال/غیرفعال‌سازی
+          و ربات تلگرام. هر کاربر در دفتر مستقل خودش ثبت می‌کند و دیگرانِ لینک‌شده
+          رکوردهای او را می‌بینند.
         </div>
       </div>
       <UsersSection />
       <AdminTelegramSection />
+      <AccessGrantsSection />
       <CounterpartiesSection />
     </div>
   );
@@ -92,10 +98,30 @@ function UsersSection() {
   const users = useAccountingStore((s) => s.users);
   const currentUserId = useAccountingStore((s) => s.currentUserId);
   const counterparties = useAccountingStore((s) => s.counterparties);
+  const updateUser = useAccountingStore((s) => s.updateUser);
+  const { toast } = useToast();
 
   // یافتن طرف حسابِ لینک‌شده به هر کاربر (ازطرف cp.linkedUserId)
   function cpForUser(userId: string) {
     return counterparties.find((c) => c.linkedUserId === userId);
+  }
+
+  async function toggleActive(
+    u: import("@/lib/accounting/types").User,
+    next: boolean
+  ) {
+    if (!currentUserId) return;
+    const res = await updateUser(u.id, { isActive: next }, currentUserId);
+    if (!res.ok) {
+      toast({ title: "خطا", description: res.error, variant: "destructive" });
+      return;
+    }
+    toast({
+      title: next ? "کاربر فعال شد" : "کاربر غیرفعال شد",
+      description: next
+        ? `«${u.displayName}» می‌تواند وارد شود.`
+        : `«${u.displayName}» دیگر نمی‌تواند وارد شود و ربات تلگرامش هم خاموش می‌شود.`,
+    });
   }
 
   return (
@@ -119,14 +145,19 @@ function UsersSection() {
             {users.map((u) => {
               const cp = cpForUser(u.id);
               const isMe = u.id === currentUserId;
+              const inactive = u.isActive === false;
               return (
                 <li
                   key={u.id}
-                  className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40 transition-colors"
+                  className={`flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40 transition-colors ${
+                    inactive ? "opacity-60" : ""
+                  }`}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium">{u.displayName}</span>
+                      <span className={`font-medium ${inactive ? "line-through decoration-rose-400/70" : ""}`}>
+                        {u.displayName}
+                      </span>
                       {u.role === "admin" ? (
                         <Badge className="h-5 bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                           {ROLE_LABELS.admin}
@@ -139,6 +170,15 @@ function UsersSection() {
                       {u.role === "user" && u.scope && (
                         <Badge variant="secondary" className="h-5 text-[10px]">
                           {SCOPE_SHORT[u.scope]}
+                        </Badge>
+                      )}
+                      {inactive && (
+                        <Badge
+                          variant="outline"
+                          className="h-5 text-[10px] gap-1 border-rose-300 text-rose-700 dark:border-rose-800 dark:text-rose-400"
+                        >
+                          <UserX className="h-3 w-3" />
+                          غیرفعال
                         </Badge>
                       )}
                       {isMe && (
@@ -164,6 +204,31 @@ function UsersSection() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={`h-8 w-8 ${
+                        inactive
+                          ? "text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                          : "text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                      }`}
+                      disabled={isMe}
+                      title={
+                        isMe
+                          ? "حساب خودتان را نمی‌توانید غیرفعال کنید"
+                          : inactive
+                          ? "فعال‌سازی کاربر"
+                          : "غیرفعال‌سازی کاربر (ورود مسدود می‌شود)"
+                      }
+                      aria-label={inactive ? "فعال‌سازی" : "غیرفعال‌سازی"}
+                      onClick={() => void toggleActive(u, inactive)}
+                    >
+                      {inactive ? (
+                        <UserCheck className="h-4 w-4" />
+                      ) : (
+                        <UserX className="h-4 w-4" />
+                      )}
+                    </Button>
                     <EditUserDialog user={u} disabled={isMe} />
                     <DeleteUserDialog user={u} disabled={isMe} />
                   </div>
@@ -612,15 +677,15 @@ function CounterpartiesSection() {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <ContactIcon className="h-4 w-4 text-primary" />
-          طرف حساب‌ها (متمرکز)
+          طرف حساب‌ها
           <Badge variant="secondary" className="mr-1 h-5">
             {toPersianDigits(counterparties.length.toString())} مورد
           </Badge>
         </CardTitle>
         <CardDescription>
-          طرف حساب‌ها برای همه کاربران یکسان‌اند. می‌توانند به یک کاربر سامانه
-          لینک شوند (یعنی همان شخص است) — در این صورت تراکنش‌های دو طرف
-          خودکار تطبیق داده می‌شوند.
+          «مشترک» را ادمین می‌سازد و با بخش «دسترسی طرف‌حساب‌ها» در اختیار
+          کاربران می‌گذارد (با یا بدون پنل کاربری). «شخصی» را هر کاربر برای
+          خودش می‌سازد و فقط در دفتر خودش دیده می‌شود.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -630,9 +695,13 @@ function CounterpartiesSection() {
               const linkedUser = c.linkedUserId
                 ? users.find((u) => u.id === c.linkedUserId)
                 : null;
+              const owner = c.ownerUserId
+                ? users.find((u) => u.id === c.ownerUserId)
+                : null;
               const txnCount = transactions.filter(
                 (t) => t.counterpartyId === c.id
               ).length;
+              const shared = c.isShared;
               return (
                 <li
                   key={c.id}
@@ -641,6 +710,23 @@ function CounterpartiesSection() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium">{c.displayName}</span>
+                      {shared ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 gap-1 text-[10px] border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400"
+                        >
+                          <Share2 className="h-2.5 w-2.5" />
+                          مشترک
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="h-5 gap-1 text-[10px] border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400"
+                        >
+                          <Lock className="h-2.5 w-2.5" />
+                          شخصی — {owner?.displayName ?? "کاربر حذف‌شده"}
+                        </Badge>
+                      )}
                       {linkedUser ? (
                         <Badge
                           variant="outline"
@@ -649,11 +735,11 @@ function CounterpartiesSection() {
                           <Link2 className="h-2.5 w-2.5" />
                           {linkedUser.username}
                         </Badge>
-                      ) : (
+                      ) : shared ? (
                         <Badge variant="secondary" className="h-5 text-[10px]">
-                          شخص عادی
+                          بدون پنل کاربری
                         </Badge>
-                      )}
+                      ) : null}
                     </div>
                     <div className="mt-0.5 text-[11px] text-muted-foreground">
                       {toPersianDigits(txnCount.toString())} تراکنش
@@ -661,8 +747,8 @@ function CounterpartiesSection() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    <EditCounterpartyDialog cp={c} />
-                    <DeleteCounterpartyDialog cp={c} txnCount={txnCount} />
+                    {shared && <EditCounterpartyDialog cp={c} />}
+                    {shared && <DeleteCounterpartyDialog cp={c} txnCount={txnCount} />}
                   </div>
                 </li>
               );
@@ -1011,5 +1097,181 @@ function DeleteCounterpartyDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+// ===========================================================================
+// بخش دسترسی طرف‌حساب‌های مشترک (گرنت‌ها)
+// ===========================================================================
+
+function AccessGrantsSection() {
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const users = useAccountingStore((s) => s.users);
+  const grants = useAccountingStore((s) => s.grants);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const grantCpAccess = useAccountingStore((s) => s.grantCpAccess);
+  const revokeCpAccess = useAccountingStore((s) => s.revokeCpAccess);
+  const { toast } = useToast();
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const sharedCps = counterparties.filter((c) => c.isShared && !c.archivedAt);
+
+  function grantedUsersOf(cpId: string) {
+    return grants
+      .filter((g) => g.counterpartyId === cpId)
+      .map((g) => users.find((u) => u.id === g.userId))
+      .filter(Boolean) as Array<import("@/lib/accounting/types").User>;
+  }
+
+  async function handleGrant(
+    cpId: string,
+    userId: string
+  ) {
+    if (!currentUserId) return;
+    const key = `${cpId}-${userId}`;
+    setBusy(key);
+    const res = await grantCpAccess(userId, cpId, currentUserId);
+    setBusy(null);
+    if (!res.ok) {
+      toast({ title: "خطا", description: res.error, variant: "destructive" });
+      return;
+    }
+    toast({
+      title: "دسترسی داده شد",
+      description: "این کاربر از حالا طرف‌حساب را در فرم ثبت تراکنش می‌بیند.",
+    });
+  }
+
+  async function handleRevoke(
+    cpId: string,
+    userId: string,
+    name: string
+  ) {
+    if (!currentUserId) return;
+    const key = `${cpId}-${userId}`;
+    setBusy(key);
+    const res = await revokeCpAccess(userId, cpId, currentUserId);
+    setBusy(null);
+    if (!res.ok) {
+      toast({ title: "خطا", description: res.error, variant: "destructive" });
+      return;
+    }
+    toast({
+      title: "دسترسی گرفته شد",
+      description: `«${name}» دیگر این طرف‌حساب را در فرم ثبت نمی‌بیند.`,
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <KeyRound className="h-4 w-4 text-primary" />
+          دسترسی طرف‌حساب‌های مشترک
+          <Badge variant="secondary" className="mr-1 h-5">
+            {toPersianDigits(grants.length.toString())} اجازه
+          </Badge>
+        </CardTitle>
+        <CardDescription>
+          مشخص کنید هر کاربر کدام طرف‌حساب‌های مشترک را در فرم ثبت تراکنشِ خود
+          ببیند (مثلاً فائزه: وحید، رضا، علی و حمید). طرف‌حساب‌های شخصی هر
+          کاربر فقط خودش را می‌بینند و به این بخش ربطی ندارند.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <ScrollArea className="max-h-96">
+          <ul className="divide-y">
+            {sharedCps.map((c) => {
+              const granted = grantedUsersOf(c.id);
+              // قابل انتخاب: همه کاربران فعال به‌جز نماینده خود طرف‌حساب
+              const candidates = users.filter(
+                (u) =>
+                  u.isActive !== false &&
+                  u.id !== c.linkedUserId &&
+                  !granted.some((g) => g.id === u.id)
+              );
+              return (
+                <li key={c.id} className="px-4 py-3 hover:bg-muted/40 transition-colors">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{c.displayName}</span>
+                    {c.linkedUserId ? (
+                      <Badge
+                        variant="outline"
+                        className="h-5 gap-1 px-1.5 text-[10px] border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-400"
+                      >
+                        <Link2 className="h-2.5 w-2.5" />
+                        {c.linkedUsername}
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="h-5 text-[10px]">
+                        بدون پنل کاربری
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {granted.length === 0 && (
+                      <span className="text-[11px] text-muted-foreground">
+                        هیچ کاربری هنوز به این طرف‌حساب دسترسی ندارد
+                      </span>
+                    )}
+                    {granted.map((u) => {
+                      const key = `${c.id}-${u.id}`;
+                      return (
+                        <span
+                          key={key}
+                          className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 pl-2.5 pr-1 py-0.5 text-[11px] text-emerald-800 dark:text-emerald-300"
+                        >
+                          {u.displayName}
+                          <button
+                            type="button"
+                            className="h-4 w-4 rounded-full inline-flex items-center justify-center hover:bg-emerald-200 dark:hover:bg-emerald-900 cursor-pointer"
+                            title={`گرفتن دسترسی از ${u.displayName}`}
+                            aria-label={`گرفتن دسترسی از ${u.displayName}`}
+                            disabled={busy === key}
+                            onClick={() => void handleRevoke(c.id, u.id, u.displayName)}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                    {candidates.length > 0 && (
+                      <Select
+                        onValueChange={(v) => {
+                          if (v) void handleGrant(c.id, v);
+                        }}
+                        value=""
+                      >
+                        <SelectTrigger
+                          className="h-7 w-auto min-w-28 text-[11px] gap-1 cursor-pointer"
+                          aria-label={`افزودن دسترسی به ${c.displayName}`}
+                        >
+                          <Plus className="h-3 w-3 text-emerald-600" />
+                          <span className="text-muted-foreground">
+                            افزودن کاربر…
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {candidates.map((u) => (
+                            <SelectItem key={u.id} value={u.id} className="text-xs">
+                              {u.displayName} ({u.username})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+            {sharedCps.length === 0 && (
+              <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+                هنوز طرف‌حساب مشترکی ساخته نشده است.
+              </li>
+            )}
+          </ul>
+        </ScrollArea>
+      </CardContent>
+    </Card>
   );
 }

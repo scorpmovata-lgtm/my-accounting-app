@@ -199,7 +199,7 @@ export function LoginScreen() {
 
       <footer className="border-t bg-card/80 backdrop-blur-sm">
         <div className="mx-auto max-w-6xl px-4 py-3 text-center text-xs text-muted-foreground">
-          دفتر حسابداری — نسخه {toPersianDigits("2.0")} (چندکاربری)
+          دفتر حسابداری — نسخه {toPersianDigits("3.0")} (چندکاربری)
         </div>
       </footer>
     </div>

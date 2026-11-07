@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Loader2, Link2, Info, CheckCircle2 } from "lucide-react";
+import { Plus, Loader2, Link2, Info, CheckCircle2, Lock, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,19 +18,21 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { useAccountingStore } from "@/store/accounting-store";
 import { useToast } from "@/hooks/use-toast";
 import { JalaliDatePicker } from "./jalali-date-picker";
 import {
-  DIRECTION_LABELS,
+  ALL_KINDS,
+  KIND_META,
   type Currency,
-  type TxDirection,
+  type TxnKind,
 } from "@/lib/accounting/types";
 import { computeContactBalance } from "@/lib/accounting/engine";
 import {
@@ -46,6 +48,8 @@ interface Props {
   trigger?: React.ReactNode;
 }
 
+const NONE = "__none__";
+
 export function TransactionFormDialog({
   open: controlledOpen,
   onOpenChange,
@@ -59,8 +63,6 @@ export function TransactionFormDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent className="sm:max-w-lg">
-        {/* بدنه فرم فقط وقتی دیالوگ باز است mount می‌شود؛
-            با بسته‌شدن، unmount و state آن به‌صورت طبیعی ریست می‌شود. */}
         {open ? <TransactionFormBody onClose={() => setOpen(false)} /> : null}
       </DialogContent>
     </Dialog>
@@ -69,28 +71,44 @@ export function TransactionFormDialog({
 
 function TransactionFormBody({ onClose }: { onClose: () => void }) {
   const currentUserId = useAccountingStore((s) => s.currentUserId);
-  const users = useAccountingStore((s) => s.users);
   const counterparties = useAccountingStore((s) => s.counterparties);
+  const categories = useAccountingStore((s) => s.categories);
   const transactions = useAccountingStore((s) => s.transactions);
   const addTransaction = useAccountingStore((s) => s.addTransaction);
   const { toast } = useToast();
 
-  const currentUser = users.find((u) => u.id === currentUserId);
-
-  const [direction, setDirection] = useState<TxDirection>("received_from");
+  const [kind, setKind] = useState<TxnKind>("paid_to");
   const [counterpartyId, setCounterpartyId] = useState("");
+  const [categoryId, setCategoryId] = useState<string>(NONE);
   const [amountRaw, setAmountRaw] = useState("");
   const [currency] = useState<Currency>("IRT");
   const [effectiveAt, setEffectiveAt] = useState<string>(todayShamsiString());
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const availableCounterparties = useMemo(() => {
-    return counterparties.filter((c) => {
+  // طرف‌حساب‌های قابل استفاده: مشترکِ مجاز (گرنت/ادمین) + شخصی خودم
+  const { sharedCps, privateCps } = useMemo(() => {
+    const state = useAccountingStore.getState();
+    const me = state.users.find((u) => u.id === currentUserId);
+    const usable = counterparties.filter((c) => {
+      if (c.archivedAt) return false;
       if (c.linkedUserId === currentUserId) return false;
-      return !c.archivedAt;
+      if (!c.isShared) return c.ownerUserId === currentUserId;
+      if (me?.role === "admin") return true;
+      return state.grants.some(
+        (g) => g.userId === currentUserId && g.counterpartyId === c.id
+      );
     });
+    return {
+      sharedCps: usable.filter((c) => c.isShared),
+      privateCps: usable.filter((c) => !c.isShared),
+    };
   }, [counterparties, currentUserId]);
+
+  const myCategories = useMemo(
+    () => categories.filter((c) => c.userId === currentUserId),
+    [categories, currentUserId]
+  );
 
   const selectedCp = counterparties.find((c) => c.id === counterpartyId);
   const selectedBalance =
@@ -131,12 +149,13 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
     await new Promise((r) => setTimeout(r, 200));
     const result = await addTransaction(
       {
-        direction,
+        kind,
         counterpartyId,
         amount: amountNum,
         currency,
         effectiveAt,
         description: description.trim() || undefined,
+        categoryId: categoryId === NONE ? null : categoryId,
       },
       currentUserId
     );
@@ -146,27 +165,17 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
       return;
     }
     const cp = counterparties.find((c) => c.id === counterpartyId);
-    const dirLabel = DIRECTION_LABELS[direction];
-    if (result.matchedWith) {
-      toast({
-        title: "تراکنش ثبت و تطبیق شد ✓",
-        description: `«${dirLabel} ${cp?.displayName}» با سمت طرف مقابل تطبیق داده شد.`,
-      });
-    } else if (cp?.linkedUserId) {
-      toast({
-        title: "تراکنش ثبت شد (در انتظار)",
-        description: `«${dirLabel} ${cp?.displayName}» ثبت شد. در انتظار ثبت توسط طرف مقابل (${cp.linkedUsername}).`,
-      });
-    } else {
-      toast({
-        title: "تراکنش ثبت شد",
-        description: `«${dirLabel} ${cp?.displayName}» ثبت شد.`,
-      });
-    }
+    const kindLabel = KIND_META[kind].label;
+    toast({
+      title: "تراکنش ثبت شد",
+      description: `«${kindLabel} ${cp?.displayName}» با مبلغ ${toPersianDigits(
+        amountNum.toLocaleString("en-US")
+      )} تومان در دفتر شما ثبت شد.`,
+    });
     onClose();
   }
 
-  if (!currentUser) return null;
+  const meta = KIND_META[kind];
 
   return (
     <>
@@ -176,36 +185,58 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
           ثبت تراکنش جدید
         </DialogTitle>
         <DialogDescription>
-          یک رکورد در دفتر خود ثبت کنید. اگر طرف حساب به کاربری لینک باشد و او
-          هم این رویداد را ثبت کند، سامانه خودکار آن دو را تطبیق می‌دهد.
+          رکورد در دفتر مستقل خودتان ثبت می‌شود — نیازی به ثبت متقابل طرف
+          مقابل نیست. اگر طرف حساب به کاربری لینک باشد، او رکورد شما را در
+          بخش «وضعیت تراکنش‌های من در حساب دیگران» می‌بیند و می‌تواند کامنت
+          بگذارد.
         </DialogDescription>
       </DialogHeader>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* جهت عملیات */}
+        {/* نوع عملیات — شش گزینه */}
         <div className="space-y-2">
           <Label>نوع عملیات</Label>
-          <ToggleGroup
-            type="single"
-            value={direction}
-            onValueChange={(v) => v && setDirection(v as TxDirection)}
-            className="grid grid-cols-2 gap-2 w-full"
-          >
-            <ToggleGroupItem
-              value="received_from"
-              className="data-[state=on]:bg-emerald-600 data-[state=on]:text-white h-11"
-              aria-label="دریافت از"
-            >
-              {DIRECTION_LABELS.received_from}
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="paid_to"
-              className="data-[state=on]:bg-rose-600 data-[state=on]:text-white h-11"
-              aria-label="پرداخت به"
-            >
-              {DIRECTION_LABELS.paid_to}
-            </ToggleGroupItem>
-          </ToggleGroup>
+          <Select value={kind} onValueChange={(v) => setKind(v as TxnKind)}>
+            <SelectTrigger className="h-10">
+              <SelectValue placeholder="یک نوع عملیات انتخاب کنید" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectLabel className="flex items-center gap-1 text-[11px]">
+                  <History className="h-3 w-3" />
+                  موجودی آغازین دفتر
+                </SelectLabel>
+                <SelectItem value="opening_claim">
+                  <span className="flex flex-col items-start py-0.5">
+                    <span>ثبت طلب اولیه — طرف حساب از ابتدا به من بدهکار است</span>
+                  </span>
+                </SelectItem>
+                <SelectItem value="opening_debt">
+                  <span className="flex flex-col items-start py-0.5">
+                    <span>ثبت بدهی اولیه — من از ابتدا به طرف حساب بدهکارم</span>
+                  </span>
+                </SelectItem>
+              </SelectGroup>
+              <SelectGroup>
+                <SelectLabel className="text-[11px]">عملیات جاری</SelectLabel>
+                {(["claim", "debt", "paid_to", "received_from"] as TxnKind[]).map(
+                  (k) => (
+                    <SelectItem key={k} value={k}>
+                      {KIND_META[k].label} — {KIND_META[k].description.split("—")[0].trim()}
+                    </SelectItem>
+                  )
+                )}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground bg-muted/40 rounded-md p-2 leading-relaxed">
+            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              {meta.receivedLike
+                ? "اثر بر مانده: بدهی شما به این طرف حساب زیاد (یا طلب شما کم) می‌شود."
+                : "اثر بر مانده: طلب شما از این طرف حساب زیاد (یا بدهی شما کم) می‌شود."}
+            </span>
+          </div>
         </div>
 
         {/* طرف حساب */}
@@ -213,35 +244,93 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
           <Label>طرف حساب</Label>
           <Select value={counterpartyId} onValueChange={setCounterpartyId}>
             <SelectTrigger className="h-10">
-              <SelectValue placeholder="یک طرف حساب انتخاب کنید" />
+              <SelectValue
+                placeholder={
+                  sharedCps.length + privateCps.length === 0
+                    ? "هیچ طرف حسابی در دسترس نیست"
+                    : "یک طرف حساب انتخاب کنید"
+                }
+              />
             </SelectTrigger>
             <SelectContent>
-              {availableCounterparties.map((c) => (
+              <SelectGroup>
+                <SelectLabel className="text-[11px]">حساب‌های مشترک (با اجازه ادمین)</SelectLabel>
+                {sharedCps.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    <span className="flex items-center gap-2">
+                      {c.displayName}
+                      {c.linkedUserId && (
+                        <Badge
+                          variant="outline"
+                          className="h-4 px-1 text-[9px] gap-0.5 border-emerald-300 text-emerald-700"
+                        >
+                          <Link2 className="h-2 w-2" />
+                          {c.linkedUsername}
+                        </Badge>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+                {sharedCps.length === 0 && (
+                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                    ادمین هنوز به شما دسترسی هیچ طرف‌حساب مشترکی نداده است
+                  </div>
+                )}
+              </SelectGroup>
+              {privateCps.length > 0 && (
+                <SelectGroup>
+                  <SelectLabel className="flex items-center gap-1 text-[11px]">
+                    <Lock className="h-3 w-3" />
+                    حساب‌های شخصی من (فقط دفتر خودم)
+                  </SelectLabel>
+                  {privateCps.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              )}
+            </SelectContent>
+          </Select>
+          {selectedCp?.linkedUserId && (
+            <div className="flex items-start gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 rounded-md p-2 leading-relaxed">
+              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                این طرف حساب به کاربر «{selectedCp.linkedUsername}» لینک است؛
+                او این رکورد را در بخش «حساب دیگران» خود می‌بیند و می‌تواند
+                روی همین ردیف کامنت بگذارد.
+              </span>
+            </div>
+          )}
+          {selectedCp && !selectedCp.isShared && (
+            <div className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 rounded-md p-2 leading-relaxed">
+              <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                طرف‌حساب شخصی شما — فقط در دفتر خودتان قابل استفاده است.
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* دسته‌بندی */}
+        <div className="space-y-2">
+          <Label>دسته‌بندی (اختیاری)</Label>
+          <Select value={categoryId} onValueChange={setCategoryId}>
+            <SelectTrigger className="h-10">
+              <SelectValue placeholder="بدون دسته" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE}>بدون دسته</SelectItem>
+              {myCategories.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
-                  <span className="flex items-center gap-2">
-                    {c.displayName}
-                    {c.linkedUserId && (
-                      <Badge
-                        variant="outline"
-                        className="h-4 px-1 text-[9px] gap-0.5 border-emerald-300 text-emerald-700"
-                      >
-                        <Link2 className="h-2 w-2" />
-                        {c.linkedUsername}
-                      </Badge>
-                    )}
-                  </span>
+                  {c.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {selectedCp?.linkedUserId && (
-            <div className="flex items-start gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 rounded-md p-2">
-              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              <span>
-                این طرف حساب به کاربر «{selectedCp.linkedUsername}» لینک است.
-                اگر آن کاربر هم این رویداد را در دفتر خود ثبت کند، سامانه خودکار
-                تطبیق می‌دهد.
-              </span>
+          {myCategories.length === 0 && (
+            <div className="text-[11px] text-muted-foreground">
+              دسته‌بندی ندارید — از منوی «تنظیمات من» می‌توانید بسازید.
             </div>
           )}
         </div>

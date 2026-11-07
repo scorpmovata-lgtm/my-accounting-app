@@ -1,6 +1,15 @@
-// Edge Function: telegram-bot (v2.0 — چندکاربری)
+// Edge Function: telegram-bot (v3.0.1 — دفترهای مستقل + شش نوع عملیات)
 // مسیر: supabase/functions/telegram-bot/index.ts
 // دیپلوی: supabase functions deploy telegram-bot --no-verify-jwt
+//
+// تغییرات نسخه ۳:
+//   - مانده بر پایه kind (به‌جای direction)
+//   - کاربر غیرفعال (is_active=false) پاسخ نمی‌گیرد و نمی‌تواند کد اتصال مصرف کند
+//   - در فهرست تراکنش‌ها دسته‌بندی هم نمایش داده می‌شود
+//
+// تغییرات ۳.۰.۱:
+//   - رفع باگ نمایش برعکسِ تاریخ شمسی در متن RTL تلگرام:
+//     تاریخ با ارقام فارسی «۱۴۰۵/۰۸/۰۴» + قفل جهت LTR (U+200E) نمایش داده می‌شود
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -78,25 +87,59 @@ function fmt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-interface V2Txn {
-  direction: string;
+// ارقام لاتین → ارقام فارسی
+function toFa(s: string): string {
+  const D = "۰۱۲۳۴۵۶۷۸۹";
+  return s.replace(/\d/g, (d) => D[+d]);
+}
+
+// تاریخ شمسی ذخیره‌شده ("1405-08-04") → «۱۴۰۵/۰۸/۰۴»
+// چرا؟ در متن RTL، تاریخِ لاتین با خط تیره توسط الگوریتم bidi تکه‌تکه و
+// برعکس (04-08-1405) رندر می‌شود. با ارقام فارسی + اسلش + دو کاراکتر
+// نامرئی U+200E (LRM) در ابتدا و انتها، کل تاریخ یک تکهٔ LTR می‌شود و
+// همیشه درست نمایش داده می‌شود.
+function faDate(s: string): string {
+  if (!s) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
+  if (!m) return String(s);
+  const d = toFa(m[1]) + "/" + toFa(m[2]) + "/" + toFa(m[3]);
+  return "\u200E" + d + "\u200E";
+}
+
+// برچسب شش نوع عملیات
+const KIND_LABELS: Record<string, string> = {
+  opening_claim: "ثبت طلب اولیه",
+  opening_debt: "ثبت بدهی اولیه",
+  claim: "ثبت طلب",
+  debt: "ثبت بدهی",
+  paid_to: "پرداخت به",
+  received_from: "دریافت از",
+};
+
+// kinds «دریافت‌مانند» → مانده به بدهی شما می‌رود
+function isReceivedLike(kind: string): boolean {
+  return kind === "received_from" || kind === "debt" || kind === "opening_debt";
+}
+
+interface V3Txn {
+  kind: string;
   amount: number;
   currency: string;
   effective_at: string;
   description: string | null;
   counterparties: { display_name: string } | null;
+  categories: { name: string } | null;
 }
 
-// مانده به تفکیک طرف حساب — همان منطق engine.ts
-// net = Σ(دریافت از) − Σ(پرداخت به)
-// receivable = max(−net, 0) → طلب من از او
-// payable = max(net, 0) → بدهی من به او
-function computeBalances(txns: V2Txn[]) {
+// مانده به تفکیک طرف حساب — همان منطق engine v3
+// receivedLike (دریافت از، ثبت بدهی، ثبت بدهی اولیه) → net ↑ (بدهکارم)
+// paidLike    (پرداخت به، ثبت طلب، ثبت طلب اولیه) → net ↓ (طلبکارم)
+function computeBalances(txns: V3Txn[]) {
   const byCp = new Map<string, { name: string; received: number; paid: number }>();
   for (const t of txns) {
     const key = t.counterparties?.display_name ?? "نامشخص";
     const row = byCp.get(key) ?? { name: key, received: 0, paid: 0 };
-    if (t.direction === "received_from") row.received += t.amount;
+    if (isReceivedLike(t.kind)) row.received += t.amount;
     else row.paid += t.amount;
     byCp.set(key, row);
   }
@@ -115,11 +158,15 @@ function computeBalances(txns: V2Txn[]) {
   return { rows, totalReceivable, totalPayable };
 }
 
+// استاندارد پیام خطای غیرفعال/تلگرام‌قطع
+const INACTIVE_MSG = "⛔ حساب شما توسط ادمین سامانه غیرفعال شده است.";
+const TG_DISABLED_MSG = "⛔ ادمین سامانه دسترسی تلگرام شما را غیرفعال کرده است.";
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-  // اعتبارسنجی وب‌هوک (اختیاری — اگر TELEGRAM_WEBHOOK_SECRET ست شده باشد)
+  // اعتبارسنجی وب‌هوک (اختیاری)
   if (WEBHOOK_SECRET) {
     const got = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
     if (got !== WEBHOOK_SECRET) return json({ error: "Forbidden" }, 403);
@@ -158,14 +205,15 @@ Deno.serve(async (req: Request) => {
       }
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("scope, telegram_enabled")
+        .select("scope, telegram_enabled, is_active")
         .eq("id", link.user_id)
         .maybeSingle();
+      if (profile?.is_active === false) {
+        if (cbChatId) await tg(cbChatId, INACTIVE_MSG, mainMenu());
+        return json({ ok: true });
+      }
       if (profile?.telegram_enabled === false) {
-        if (cbChatId) await tg(cbChatId,
-          "⛔ ادمین سامانه دسترسی تلگرام شما را غیرفعال کرده است.",
-          mainMenu()
-        );
+        if (cbChatId) await tg(cbChatId, TG_DISABLED_MSG, mainMenu());
         return json({ ok: true });
       }
       if (profile?.scope === "balance_only") {
@@ -179,12 +227,12 @@ Deno.serve(async (req: Request) => {
       const limit = cbData === "txns_all" ? 500 : parseInt(cbData.split("_")[1] ?? "10", 10);
       const { data: txns } = await supabase
         .from("transactions")
-        .select("direction, amount, currency, effective_at, description, counterparties(display_name)")
+        .select("kind, amount, currency, effective_at, description, counterparties(display_name), categories(name)")
         .eq("user_id", link.user_id)
         .eq("status", "POSTED")
         .order("created_at", { ascending: false })
         .limit(limit);
-      const txList = (txns ?? []) as V2Txn[];
+      const txList = (txns ?? []) as V3Txn[];
       if (txList.length === 0) {
         if (cbChatId) await tg(cbChatId, "📭 تراکنشی برای نمایش وجود ندارد.", mainMenu());
         return json({ ok: true });
@@ -194,11 +242,15 @@ Deno.serve(async (req: Request) => {
       let msg = "📋 <b>تراکنش‌های شما</b> (" + (cbData === "txns_all" ? "همه" : String(limit)) + " مورد — جدید به قدیم)\n\n";
       for (const t of txList) {
         const cp = t.counterparties?.display_name ?? "نامشخص";
-        if (t.direction === "paid_to") {
-          msg += "🟥 پرداخت به <b>" + cp + "</b>: " + fmt(t.amount) + " " + label + " | " + t.effective_at;
+        const kindLabel = KIND_LABELS[t.kind] ?? t.kind;
+        // 🟢 = طلب‌ساز برای شما (پرداخت‌مانند) | 🔴 = بدهی‌ساز برای شما (دریافت‌مانند)
+        const dateStr = faDate(t.effective_at);
+        if (isReceivedLike(t.kind)) {
+          msg += "🔴 " + kindLabel + " <b>" + cp + "</b>: " + fmt(t.amount) + " " + label + " | " + dateStr;
         } else {
-          msg += "🟩 دریافت از <b>" + cp + "</b>: " + fmt(t.amount) + " " + label + " | " + t.effective_at;
+          msg += "🟢 " + kindLabel + " <b>" + cp + "</b>: " + fmt(t.amount) + " " + label + " | " + dateStr;
         }
+        if (t.categories?.name) msg += " | دسته: " + t.categories.name;
         if (t.description) msg += " | " + t.description;
         msg += "\n";
       }
@@ -268,15 +320,19 @@ Deno.serve(async (req: Request) => {
       }
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("display_name, scope, telegram_enabled")
+        .select("display_name, scope, telegram_enabled, is_active")
         .eq("id", linkCode.user_id)
         .maybeSingle();
       if (!profile) {
         await tg(chatId, "❌ پروفایل کاربر پیدا نشد. با ادمین تماس بگیرید.", mainMenu());
         return json({ ok: true });
       }
+      if (profile.is_active === false) {
+        await tg(chatId, INACTIVE_MSG, mainMenu());
+        return json({ ok: true });
+      }
       if (profile.telegram_enabled === false) {
-        await tg(chatId, "⛔ ادمین دسترسی تلگرام شما را غیرفعال کرده است. برای فعال‌سازی با ادمین تماس بگیرید.", mainMenu());
+        await tg(chatId, TG_DISABLED_MSG, mainMenu());
         return json({ ok: true });
       }
       // کد مصرف شد
@@ -325,26 +381,26 @@ Deno.serve(async (req: Request) => {
       }
       const { data: profile } = await supabase
         .from("user_profiles")
-        .select("scope, telegram_enabled")
+        .select("scope, telegram_enabled, is_active")
         .eq("id", link.user_id)
         .maybeSingle();
       const balanceOnly = profile?.scope === "balance_only";
+      if (profile?.is_active === false) {
+        await tg(chatId, INACTIVE_MSG, mainMenu());
+        return json({ ok: true });
+      }
       if (profile?.telegram_enabled === false) {
-        await tg(chatId,
-          "⛔ ادمین سامانه دسترسی تلگرام شما را غیرفعال کرده است.\n" +
-          "برای فعال‌سازی با ادمین تماس بگیرید.",
-          mainMenu()
-        );
+        await tg(chatId, TG_DISABLED_MSG, mainMenu());
         return json({ ok: true });
       }
 
       const { data: txns } = await supabase
         .from("transactions")
-        .select("direction, amount, currency, effective_at, description, counterparties(display_name)")
+        .select("kind, amount, currency, effective_at, description, counterparties(display_name), categories(name)")
         .eq("user_id", link.user_id)
         .eq("status", "POSTED")
         .order("created_at", { ascending: false });
-      const txList = (txns ?? []) as V2Txn[];
+      const txList = (txns ?? []) as V3Txn[];
       const { rows, totalReceivable, totalPayable } = computeBalances(txList);
       const currency = (txList[0]?.currency) || "IRT";
       const label = currency === "IRT" ? "تومان" : "ریال";
@@ -387,6 +443,8 @@ Deno.serve(async (req: Request) => {
         "📋 <b>تراکنش‌ها</b> — فهرست تراکنش‌ها (طبق سطح دسترسی)\n" +
         "🔗 <b>اتصال با کد</b> — اتصال با کد ۶ رقمی که ادمین به شما می‌دهد\n" +
         "❓ <b>راهنما</b> — همین پیام\n\n" +
+        "🔴 در فهرست تراکنش‌ها: عملیات بدهی‌ساز برای شما\n" +
+        "🟢 عملیات طلب‌ساز برای شما\n\n" +
         "دستورها: <code>/start</code> ، <code>/link 123456</code> ، <code>/balance</code> ، <code>/transactions</code> ، <code>/help</code>",
         mainMenu()
       );

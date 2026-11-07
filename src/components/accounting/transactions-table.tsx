@@ -4,17 +4,20 @@ import { useMemo, useState } from "react";
 import {
   Search,
   Link2,
-  CheckCircle2,
-  Clock,
   User as UserIcon,
   ArrowDownLeft,
   ArrowUpRight,
   Receipt,
-  LinkIcon,
+  MessageCircle,
+  ChevronDown,
+  History,
+  Lock,
+  Tag,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -27,34 +30,37 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAccountingStore, selectUserTransactions } from "@/store/accounting-store";
 import {
-  DIRECTION_LABELS,
-  type MatchStatus,
+  useAccountingStore,
+  selectUserTransactions,
+  selectCommentsForTxn,
+} from "@/store/accounting-store";
+import {
+  ALL_KINDS,
+  KIND_META,
+  isReceivedLike,
+  isOpening,
+  type Transaction,
 } from "@/lib/accounting/types";
+import { TxnCommentsThread } from "./txn-comments-thread";
 import {
-  formatShamsiLong,
   formatShamsiShort,
   toPersianDigits,
 } from "@/lib/accounting/jalali";
 
-const STATUS_FILTERS: { value: string; label: string }[] = [
-  { value: "all", label: "همه" },
-  { value: "matched", label: "تطبیق‌یافته" },
-  { value: "pending", label: "در انتظار" },
-  { value: "unmatched", label: "شخص عادی" },
-];
+const ALL = "all";
 
 export function TransactionsTable() {
   const currentUserId = useAccountingStore((s) => s.currentUserId);
   const users = useAccountingStore((s) => s.users);
   const counterparties = useAccountingStore((s) => s.counterparties);
+  const categories = useAccountingStore((s) => s.categories);
   const transactions = useAccountingStore((s) => s.transactions);
 
   const [search, setSearch] = useState("");
-  const [cpFilter, setCpFilter] = useState("all");
-  const [dirFilter, setDirFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [cpFilter, setCpFilter] = useState(ALL);
+  const [kindFilter, setKindFilter] = useState(ALL);
+  const [catFilter, setCatFilter] = useState(ALL);
 
   const currentUser = users.find((u) => u.id === currentUserId);
 
@@ -65,53 +71,33 @@ export function TransactionsTable() {
     return selectUserTransactions(state, currentUserId);
   }, [currentUserId, transactions]);
 
+  // طرف‌حساب‌هایی که خودم با آن‌ها تراکنش دارم (برای فیلتر)
+  const myCpIds = useMemo(
+    () => new Set(myTxns.map((t) => t.counterpartyId)),
+    [myTxns]
+  );
+  const myCps = counterparties.filter((c) => myCpIds.has(c.id));
+
+  const myCategories = useMemo(
+    () => categories.filter((c) => c.userId === currentUserId),
+    [categories, currentUserId]
+  );
+
   // فیلتر
   const filtered = useMemo(() => {
     return myTxns.filter((t) => {
-      if (cpFilter !== "all" && t.counterpartyId !== cpFilter) return false;
-      if (dirFilter !== "all" && t.direction !== dirFilter) return false;
-      if (statusFilter !== "all" && t.matchStatus !== statusFilter) return false;
+      if (cpFilter !== ALL && t.counterpartyId !== cpFilter) return false;
+      if (kindFilter !== ALL && t.kind !== kindFilter) return false;
+      if (catFilter !== ALL && (t.categoryId ?? "") !== catFilter) return false;
       if (search.trim()) {
         const cp = counterparties.find((c) => c.id === t.counterpartyId);
-        const hay = `${cp?.displayName ?? ""} ${t.description ?? ""} ${t.effectiveAt}`;
+        const cat = categories.find((c) => c.id === t.categoryId);
+        const hay = `${cp?.displayName ?? ""} ${t.description ?? ""} ${t.effectiveAt} ${cat?.name ?? ""}`;
         if (!hay.includes(search.trim())) return false;
       }
       return true;
     });
-  }, [myTxns, cpFilter, dirFilter, statusFilter, search, counterparties]);
-
-  // گروه‌بندی: زوج‌های تطبیق‌یافته را یک‌بار نمایش بده (نه دو بار)
-  const rendered: React.ReactNode[] = [];
-  const shownIds = new Set<string>();
-
-  for (const t of filtered) {
-    if (shownIds.has(t.id)) continue;
-
-    if (t.matchStatus === "matched" && t.matchedTransactionId) {
-      const partner = transactions.find((x) => x.id === t.matchedTransactionId);
-      if (partner) {
-        shownIds.add(t.id);
-        shownIds.add(partner.id);
-        rendered.push(
-          <MatchedPairCard
-            key={`pair-${t.id}`}
-            mine={t}
-            partner={partner}
-            currentUser={currentUser}
-          />
-        );
-        continue;
-      }
-    }
-    shownIds.add(t.id);
-    rendered.push(
-      <SingleTxnCard
-        key={t.id}
-        txn={t}
-        currentUser={currentUser}
-      />
-    );
-  }
+  }, [myTxns, cpFilter, kindFilter, catFilter, search, counterparties, categories]);
 
   if (!currentUserId || !currentUser) {
     return (
@@ -157,32 +143,36 @@ export function TransactionsTable() {
             <SelectValue placeholder="طرف حساب" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">همه طرف حساب‌ها</SelectItem>
-            {counterparties.map((c) => (
+            <SelectItem value={ALL}>همه طرف حساب‌ها</SelectItem>
+            {myCps.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.displayName}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Select value={dirFilter} onValueChange={setDirFilter}>
+        <Select value={kindFilter} onValueChange={setKindFilter}>
           <SelectTrigger className="h-9">
-            <SelectValue placeholder="نوع" />
+            <SelectValue placeholder="نوع عملیات" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">هر دو نوع</SelectItem>
-            <SelectItem value="received_from">دریافت از</SelectItem>
-            <SelectItem value="paid_to">پرداخت به</SelectItem>
+            <SelectItem value={ALL}>همه انواع</SelectItem>
+            {ALL_KINDS.map((k) => (
+              <SelectItem key={k} value={k}>
+                {KIND_META[k].label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={catFilter} onValueChange={setCatFilter}>
           <SelectTrigger className="h-9">
-            <SelectValue placeholder="وضعیت تطابق" />
+            <SelectValue placeholder="دسته‌بندی" />
           </SelectTrigger>
           <SelectContent>
-            {STATUS_FILTERS.map((s) => (
-              <SelectItem key={s.value} value={s.value}>
-                {s.label}
+            <SelectItem value={ALL}>همه دسته‌ها</SelectItem>
+            {myCategories.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -205,7 +195,11 @@ export function TransactionsTable() {
         </Card>
       ) : (
         <ScrollArea className="max-h-[60vh]">
-          <div className="space-y-3 pr-1">{rendered}</div>
+          <div className="space-y-2.5 pr-1">
+            {filtered.map((t) => (
+              <TxnCard key={t.id} txn={t} />
+            ))}
+          </div>
         </ScrollArea>
       )}
     </div>
@@ -213,203 +207,165 @@ export function TransactionsTable() {
 }
 
 // ---------------------------------------------------------------------------
-// کارت زوج تطبیق‌یافته — دو رکورد کنار هم
+// کارت تک‌رکوردی با کامنت‌های بازشدنی
 // ---------------------------------------------------------------------------
 
-function MatchedPairCard({
-  mine,
-  partner,
-  currentUser,
-}: {
-  mine: import("@/lib/accounting/types").Transaction;
-  partner: import("@/lib/accounting/types").Transaction;
-  currentUser: import("@/lib/accounting/types").User | undefined;
-}) {
+function TxnCard({ txn }: { txn: Transaction }) {
   const counterparties = useAccountingStore((s) => s.counterparties);
-  const users = useAccountingStore((s) => s.users);
+  const categories = useAccountingStore((s) => s.categories);
+  const comments = useAccountingStore((s) => s.comments);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const [open, setOpen] = useState(false);
 
-  const myCp = counterparties.find((c) => c.id === mine.counterpartyId);
-  const partnerCp = counterparties.find((c) => c.id === partner.counterpartyId);
-  const partnerUser = users.find((u) => u.id === partner.userId);
-
-  return (
-    <Card className="overflow-hidden border-emerald-300/60 dark:border-emerald-800/60">
-      {/* نوار بالایی زوج */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50/70 dark:bg-emerald-950/20 border-b border-emerald-200/50 dark:border-emerald-900/50">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-800 dark:text-emerald-300">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          تطبیق‌یافته ✓
-        </div>
-        <div className="text-xs text-muted-foreground" dir="ltr">
-          {formatShamsiShort(mine.effectiveAt)}
-        </div>
-      </div>
-      <CardContent className="p-0">
-        {/* رکورد شما */}
-        <TxnRow
-          txn={mine}
-          cp={myCp}
-          ownerLabel={`${currentUser?.displayName ?? "شما"} (شما)`}
-          isMine
-        />
-        {/* خط ارتباطی */}
-        <div className="flex items-center justify-center py-1 bg-muted/30">
-          <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
-            <LinkIcon className="h-3 w-3" />
-            تطبیق داده شد
-          </div>
-        </div>
-        {/* رکورد طرف مقابل */}
-        <TxnRow
-          txn={partner}
-          cp={partnerCp}
-          ownerLabel={`${partnerUser?.displayName ?? "طرف مقابل"} (طرف مقابل)`}
-          isMine={false}
-        />
-        {/* توضیح مشترک */}
-        {(mine.description || partner.description) && (
-          <div className="px-3 py-2 border-t bg-muted/20 text-xs text-muted-foreground space-y-1">
-            {mine.description && (
-              <div>
-                <span className="font-medium">یادداشت شما:</span> {mine.description}
-              </div>
-            )}
-            {partner.description && (
-              <div>
-                <span className="font-medium">یادداشت طرف مقابل:</span>{" "}
-                {partner.description}
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// کارت تک‌رکوردی (pending یا unmatched)
-// ---------------------------------------------------------------------------
-
-function SingleTxnCard({
-  txn,
-  currentUser,
-}: {
-  txn: import("@/lib/accounting/types").Transaction;
-  currentUser: import("@/lib/accounting/types").User | undefined;
-}) {
-  const counterparties = useAccountingStore((s) => s.counterparties);
   const cp = counterparties.find((c) => c.id === txn.counterpartyId);
+  const cat = categories.find((c) => c.id === txn.categoryId);
+  const receivedLike = isReceivedLike(txn.kind);
+  const opening = isOpening(txn.kind);
 
-  const isPending = txn.matchStatus === "pending";
+  const commentCount = useMemo(() => {
+    if (!currentUserId) return 0;
+    return selectCommentsForTxn(
+      useAccountingStore.getState(),
+      currentUserId,
+      txn.id
+    ).length;
+  }, [comments, currentUserId, txn.id]);
 
   return (
     <Card
-      className={
-        isPending
-          ? "overflow-hidden border-amber-300/60 dark:border-amber-800/60"
-          : "overflow-hidden"
-      }
+      className={`overflow-hidden transition-colors ${
+        opening
+          ? "border-amber-300/60 dark:border-amber-800/60"
+          : ""
+      }`}
     >
-      {isPending ? (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-50/70 dark:bg-amber-950/20 border-b border-amber-200/50 dark:border-amber-900/50">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
-            <Clock className="h-3.5 w-3.5" />
-            در انتظار طرف مقابل
+      {opening && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-amber-50/70 dark:bg-amber-950/20 border-b border-amber-200/50 dark:border-amber-900/50">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 dark:text-amber-300">
+            <History className="h-3 w-3" />
+            موجودی آغازین دفتر
           </div>
-          <div className="text-xs text-muted-foreground" dir="ltr">
-            {formatShamsiShort(txn.effectiveAt)}
-          </div>
-        </div>
-      ) : (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/30 border-b">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <UserIcon className="h-3.5 w-3.5" />
-            طرف حساب شخص عادی
-          </div>
-          <div className="text-xs text-muted-foreground" dir="ltr">
+          <div className="text-[11px] text-muted-foreground" dir="ltr">
             {formatShamsiShort(txn.effectiveAt)}
           </div>
         </div>
       )}
       <CardContent className="p-0">
-        <TxnRow
-          txn={txn}
-          cp={cp}
-          ownerLabel={`${currentUser?.displayName ?? "شما"} (شما)`}
-          isMine
-        />
+        {/* ردیف اصلی */}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="w-full flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted/40 transition-colors text-right cursor-pointer"
+          aria-expanded={open}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
+                receivedLike
+                  ? "bg-rose-100 dark:bg-rose-950/40"
+                  : "bg-emerald-100 dark:bg-emerald-950/40"
+              }`}
+            >
+              {receivedLike ? (
+                <ArrowUpRight className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+              ) : (
+                <ArrowDownLeft className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-muted-foreground">
+                  {KIND_META[txn.kind].label}
+                </span>
+                <span className="font-medium truncate">
+                  {cp?.displayName ?? "نامشخص"}
+                </span>
+                {cp?.linkedUserId && (
+                  <Badge
+                    variant="outline"
+                    className="h-4 px-1 text-[9px] gap-0.5 border-emerald-300 text-emerald-700"
+                  >
+                    <Link2 className="h-2 w-2" />
+                    {cp.linkedUsername}
+                  </Badge>
+                )}
+                {!cp?.isShared && (
+                  <Badge
+                    variant="outline"
+                    className="h-4 px-1 text-[9px] gap-0.5 border-amber-300 text-amber-700"
+                  >
+                    <Lock className="h-2 w-2" />
+                    شخصی
+                  </Badge>
+                )}
+                {cat && (
+                  <Badge variant="secondary" className="h-4 px-1.5 text-[9px] gap-0.5">
+                    <Tag className="h-2.5 w-2.5" />
+                    {cat.name}
+                  </Badge>
+                )}
+                {commentCount > 0 && (
+                  <Badge variant="outline" className="h-4 px-1 text-[9px] gap-0.5">
+                    <MessageCircle className="h-2.5 w-2.5" />
+                    {toPersianDigits(commentCount.toString())}
+                  </Badge>
+                )}
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                {txn.description || formatShamsiShort(txn.effectiveAt)}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="text-left">
+              <div
+                className={`font-bold ${
+                  receivedLike
+                    ? "text-rose-700 dark:text-rose-300"
+                    : "text-emerald-700 dark:text-emerald-300"
+                }`}
+                dir="ltr"
+              >
+                {toPersianDigits(txn.amount.toLocaleString("en-US"))}
+              </div>
+              <div className="text-[10px] text-muted-foreground text-left">تومان</div>
+            </div>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </div>
+        </button>
+
+        {/* بخش بازشدنی: کامنت‌ها */}
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="comments"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="overflow-hidden border-t bg-muted/20"
+            >
+              <div className="p-3">
+                {cp?.linkedUserId && (
+                  <div className="mb-2 flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                    <MessageCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      کاربر «{cp.linkedUsername}» این رکورد را در بخش «حساب
+                      دیگران» خود می‌بیند؛ شما دو نفر می‌توانید اینجا کامنت
+                      رد و بدل کنید.
+                    </span>
+                  </div>
+                )}
+                <TxnCommentsThread transactionId={txn.id} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </CardContent>
     </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// یک ردیف تراکنش
-// ---------------------------------------------------------------------------
-
-function TxnRow({
-  txn,
-  cp,
-  ownerLabel,
-  isMine,
-}: {
-  txn: import("@/lib/accounting/types").Transaction;
-  cp: import("@/lib/accounting/types").Counterparty | undefined;
-  ownerLabel: string;
-  isMine: boolean;
-}) {
-  const isReceived = txn.direction === "received_from";
-  return (
-    <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-      <div className="flex items-center gap-2.5 min-w-0">
-        <div
-          className={`h-8 w-8 shrink-0 rounded-full flex items-center justify-center ${
-            isReceived
-              ? "bg-emerald-100 dark:bg-emerald-950/40"
-              : "bg-rose-100 dark:bg-rose-950/40"
-          }`}
-        >
-          {isReceived ? (
-            <ArrowDownLeft className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-          ) : (
-            <ArrowUpRight className="h-4 w-4 text-rose-600 dark:text-rose-400" />
-          )}
-        </div>
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-muted-foreground">
-              {DIRECTION_LABELS[txn.direction]}
-            </span>
-            <span className="font-medium truncate">{cp?.displayName ?? "نامشخص"}</span>
-            {cp?.linkedUserId && (
-              <Badge
-                variant="outline"
-                className="h-4 px-1 text-[9px] gap-0.5 border-emerald-300 text-emerald-700"
-              >
-                <Link2 className="h-2 w-2" />
-                {cp.linkedUsername}
-              </Badge>
-            )}
-          </div>
-          <div className="text-[10px] text-muted-foreground mt-0.5">
-            {ownerLabel}
-          </div>
-        </div>
-      </div>
-      <div className="text-left shrink-0">
-        <div
-          className={`font-bold dir-ltr ${
-            isReceived
-              ? "text-emerald-700 dark:text-emerald-300"
-              : "text-rose-700 dark:text-rose-300"
-          }`}
-          dir="ltr"
-        >
-          {toPersianDigits(txn.amount.toLocaleString("en-US"))}
-        </div>
-        <div className="text-[10px] text-muted-foreground">تومان</div>
-      </div>
-    </div>
   );
 }

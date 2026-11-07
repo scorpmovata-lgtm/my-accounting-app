@@ -1,8 +1,18 @@
 // supabase/functions/create-transaction/index.ts
-// ثبت تراکنش با منطق تطابق خودکار بین‌کاربری
+// ثبت تراکنش در دفتر مستقل کاربر — نسخه ۳.۰ (تطابق حذف شد)
+// شش kind: opening_claim / opening_debt / claim / debt / paid_to / received_from
 // Deploy: supabase functions deploy create-transaction
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const KINDS = [
+  "opening_claim",
+  "opening_debt",
+  "claim",
+  "debt",
+  "paid_to",
+  "received_from",
+];
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -29,27 +39,33 @@ Deno.serve(async (req) => {
     if (!user) return json({ error: "احراز هویت نشده" }, 401);
 
     const body = await req.json();
-    const direction = body.direction;
+    const kind = body.kind;
     const counterpartyId = body.counterpartyId;
     const amount = Math.floor(Number(body.amount));
     const currency = body.currency || "IRT";
     const effectiveAt = body.effectiveAt; // شمسی yyyy-mm-dd
     const description = body.description || null;
+    const categoryId = body.categoryId || null;
     const idempotencyKey = body.idempotencyKey || crypto.randomUUID();
 
     // اعتبارسنجی
     if (!counterpartyId) return json({ error: "طرف حساب الزامی است" }, 400);
-    if (!["received_from", "paid_to"].includes(direction))
-      return json({ error: "نوع عملیات نامعتبر" }, 400);
+    if (!KINDS.includes(kind)) return json({ error: "نوع عملیات نامعتبر است" }, 400);
     if (!Number.isFinite(amount) || amount <= 0)
       return json({ error: "مبلغ نامعتبر" }, 400);
     if (!effectiveAt) return json({ error: "تاریخ الزامی است" }, 400);
 
-    // کلاینت service_role برای نوشتن (RLS نوشتن را ممنوع کرده)
     const admin = createClient(
       Deno.env.get("SUPABASE_URL"),
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
     );
+
+    // کاربر غیرفعال نمی‌تواند ثبت کند
+    const { data: myProfile } = await admin
+      .from("user_profiles").select("is_active, display_name").eq("id", user.id).maybeSingle();
+    if (!myProfile) return json({ error: "پروفایل کاربر یافت نشد" }, 403);
+    if (myProfile.is_active === false)
+      return json({ error: "حساب شما توسط ادمین غیرفعال شده است" }, 403);
 
     // طرف حساب
     const { data: cp } = await admin
@@ -58,101 +74,71 @@ Deno.serve(async (req) => {
     if (cp.linked_user_id === user.id)
       return json({ error: "نمی‌توان با طرف حساب خودتان تراکنش ثبت کنید" }, 400);
 
+    // دسترسی به طرف حساب:
+    //   شخصی → فقط مالکش | مشترک → ادمین یا داشتن گرنت
+    if (cp.is_shared === false) {
+      if (cp.owner_user_id !== user.id)
+        return json({ error: "این طرف حساب شخصی شما نیست" }, 403);
+    } else {
+      const isAdmin = myProfile.is_active && (await admin
+        .from("user_profiles").select("role").eq("id", user.id).maybeSingle()
+      ).data?.role === "admin";
+      if (!isAdmin) {
+        const { count } = await admin
+          .from("counterparty_access")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("counterparty_id", counterpartyId);
+        if (!count)
+          return json(
+            { error: "ادمین به شما دسترسی این طرف حساب مشترک را نداده است" },
+            403
+          );
+      }
+    }
+
+    // دسته‌بندی باید متعلق به خود کاربر باشد
+    if (categoryId) {
+      const { data: cat } = await admin
+        .from("categories").select("id").eq("id", categoryId)
+        .eq("user_id", user.id).maybeSingle();
+      if (!cat) return json({ error: "دسته‌بندی نامعتبر است" }, 400);
+    }
+
     // idempotency: اگر تراکنش با همین کلید قبلاً ثبت شده، همان را برگردان
     const { data: existing } = await admin
       .from("transactions").select("*")
       .eq("user_id", user.id).eq("idempotency_key", idempotencyKey).maybeSingle();
     if (existing) return json({ ok: true, transaction: existing, idempotent: true });
 
-    // درج تراکنش
+    // درج تراکنش — دفتر مستقل، بدون تطابق
     const { data: txn, error } = await admin.from("transactions").insert({
       user_id: user.id,
       counterparty_id: counterpartyId,
-      direction,
+      kind,
       amount,
       currency,
       effective_at: effectiveAt,
       created_by: user.id,
       description,
+      category_id: categoryId,
       status: "POSTED",
-      match_status: "pending",
       idempotency_key: idempotencyKey,
     }).select().single();
     if (error) return json({ error: error.message }, 500);
 
-    // --- منطق تطابق بین‌کاربری ---
-    // اگر طرف حساب به کاربری لینک است، در دفتر آن کاربر به دنبال تراکنش
-    // تطبیقی می‌گردیم: جهت متضاد، مبلغ/تاریخ/واحد برابر، و طرف حسابِ آن
-    // تراکنش به کاربرِ فعلی لینک باشد (لینک متقابل).
-    let matchedWith = null;
-    let matchStatus = "unmatched";
-
-    if (cp.linked_user_id) {
-      // طرف حسابی که نماینده کاربر فعلی است (در دفتر طرف مقابل)
-      const { data: partnerCp } = await admin
-        .from("counterparties").select("*")
-        .eq("linked_user_id", user.id).maybeSingle();
-
-      if (partnerCp) {
-        // تراکنش‌های کاربر لینک‌شده به این طرف حساب
-        const { data: candidates } = await admin
-          .from("transactions").select("*")
-          .eq("user_id", cp.linked_user_id)
-          .eq("status", "POSTED");
-
-        for (const c of candidates || []) {
-          // باید طرف حسابِ تراکنشِ مقابل، همان partnerCp باشد (لینک متقابل)
-          if (c.counterparty_id !== partnerCp.id) continue;
-          if (c.direction === direction) continue; // باید متضاد
-          if (c.amount !== amount) continue;
-          if (c.currency !== currency) continue;
-          if (c.effective_at !== effectiveAt) continue;
-          matchedWith = c;
-          break;
-        }
-      }
-      matchStatus = matchedWith ? "matched" : "pending";
-    }
-
-    // به‌روزرسانی وضعیت تطابق (در خود تراکنش و در زوج)
-    if (matchedWith) {
-      await admin.from("transactions").update({
-        match_status: "matched",
-        matched_transaction_id: matchedWith.id,
-      }).eq("id", txn.id);
-      await admin.from("transactions").update({
-        match_status: "matched",
-        matched_transaction_id: txn.id,
-      }).eq("id", matchedWith.id);
-    } else if (!cp.linked_user_id) {
-      await admin.from("transactions").update({
-        match_status: "unmatched",
-        matched_transaction_id: null,
-      }).eq("id", txn.id);
-    }
-
     // گزارش ممیزی
-    const { data: profile } = await admin
-      .from("user_profiles").select("display_name").eq("id", user.id).maybeSingle();
     await admin.from("audit_logs").insert({
       actor_id: user.id,
-      actor_name: profile?.display_name || "—",
+      actor_name: myProfile.display_name || "—",
       action: "CREATE_TXN",
       entity_type: "Transaction",
       entity_id: txn.id,
       result: "success",
-      details: "ثبت " + amount + " " + direction + " — " + matchStatus,
+      details: "ثبت " + amount + " " + kind + (categoryId ? " — دسته‌بندی‌دار" : ""),
     });
 
-    const updatedTxn = (await admin
-      .from("transactions").select("*").eq("id", txn.id).maybeSingle()).data;
-
-    return json({
-      ok: true,
-      transaction: updatedTxn,
-      matchedWith,
-      matchStatus,
-    });
+    return json({ ok: true, transaction: txn });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }

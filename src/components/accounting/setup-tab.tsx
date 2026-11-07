@@ -12,6 +12,10 @@ import {
   Server,
   Terminal,
   Send,
+  GitBranch,
+  Clock,
+  Sparkles,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,13 +29,24 @@ import {
 import {
   SCHEMA_SQL_V2,
   TELEGRAM_SCHEMA_SQL,
-  CREATE_TRANSACTION_FN_V2,
-  ADMIN_USERS_FN_V2,
-  ADMIN_COUNTERPARTIES_FN_V2,
-  DEPLOYMENT_STEPS_V2,
 } from "@/lib/deployment/v2-artifacts";
-import { TELEGRAM_BOT_FN_V2 } from "@/lib/telegram-bot-v2";
+import {
+  SCHEMA_SQL_V3,
+  CREATE_TRANSACTION_FN_V3,
+  ADMIN_USERS_FN_V3,
+  ADMIN_COUNTERPARTIES_FN_V3,
+  DEPLOYMENT_STEPS_V3,
+} from "@/lib/deployment/v3-artifacts";
+import { TELEGRAM_BOT_FN_V3 } from "@/lib/deployment/v3-artifacts";
 import { useToast } from "@/hooks/use-toast";
+import {
+  APP_VERSION,
+  APP_BUILD_DATE,
+  APP_BUILD_TIME,
+  APP_CHANGES,
+  VERSION_HISTORY,
+} from "@/lib/version";
+import { toPersianDigits } from "@/lib/accounting/jalali";
 
 interface ArtifactBlock {
   id: string;
@@ -45,64 +60,74 @@ interface ArtifactBlock {
 
 const ARTIFACTS: ArtifactBlock[] = [
   {
-    id: "schema",
-    title: "۱) SQL Schema",
+    id: "schema-v3",
+    title: "۱) مهاجرت SQL نسخه ۳ (الزامی — همه نصب‌ها)",
+    filename: "schema-v3.sql",
+    language: "sql",
+    code: SCHEMA_SQL_V3,
+    icon: Database,
+    description:
+      "دسته‌بندی‌ها، کامنت‌ها، گرنت دسترسی طرف‌حساب‌ها، ستون is_active و kind + تبدیل داده قدیمی. idempotent و بدون حذف داده.",
+  },
+  {
+    id: "create-txn",
+    title: "۲) Edge Function: create-transaction (v3)",
+    filename: "create-transaction.ts",
+    language: "typescript",
+    code: CREATE_TRANSACTION_FN_V3,
+    icon: FunctionSquare,
+    description:
+      "ثبت تراکنش دفتر مستقل با شش نوع عملیات + دسته‌بندی + اعتبارسنجی دسترسی طرف‌حساب.",
+  },
+  {
+    id: "admin-users",
+    title: "۳) Edge Function: admin-users (v3)",
+    filename: "admin-users.ts",
+    language: "typescript",
+    code: ADMIN_USERS_FN_V3,
+    icon: FunctionSquare,
+    description:
+      "مدیریت کاربران + فعال/غیرفعال‌سازی (is_active).",
+  },
+  {
+    id: "admin-cp",
+    title: "۴) Edge Function: admin-counterparties (v3)",
+    filename: "admin-counterparties.ts",
+    language: "typescript",
+    code: ADMIN_COUNTERPARTIES_FN_V3,
+    icon: FunctionSquare,
+    description:
+      "مدیریت طرف‌حساب‌های مشترک + grant/revoke دسترسی کاربران (POST با action).",
+  },
+  {
+    id: "telegram-bot",
+    title: "۵) Edge Function: ربات تلگرام (v3)",
+    filename: "telegram-bot.ts",
+    language: "typescript",
+    code: TELEGRAM_BOT_FN_V3,
+    icon: Send,
+    description:
+      "مانده بر پایه شش نوع عملیات + نمایش دسته + رد کاربران غیرفعال. (Verify JWT خاموش بماند)",
+  },
+  {
+    id: "schema-v2",
+    title: "۶) SQL Schema نسخه ۲ (فقط نصب از صفر)",
     filename: "schema-v2.sql",
     language: "sql",
     code: SCHEMA_SQL_V2,
     icon: Database,
     description:
-      "ساختار کامل PostgreSQL + RLS policies + تابع is_admin/make_admin. اجرا در SQL Editor.",
-  },
-  {
-    id: "create-txn",
-    title: "۲) Edge Function: create-transaction",
-    filename: "create-transaction.ts",
-    language: "typescript",
-    code: CREATE_TRANSACTION_FN_V2,
-    icon: FunctionSquare,
-    description:
-      "ثبت تراکنش با منطق تطابق خودکار بین‌کاربری (هسته نوآوری نسخه ۲.۰).",
-  },
-  {
-    id: "admin-users",
-    title: "۳) Edge Function: admin-users",
-    filename: "admin-users.ts",
-    language: "typescript",
-    code: ADMIN_USERS_FN_V2,
-    icon: FunctionSquare,
-    description:
-      "مدیریت کاربران توسط ادمین (ایجاد با username/password/scope، ویرایش، حذف).",
-  },
-  {
-    id: "admin-cp",
-    title: "۴) Edge Function: admin-counterparties",
-    filename: "admin-counterparties.ts",
-    language: "typescript",
-    code: ADMIN_COUNTERPARTIES_FN_V2,
-    icon: FunctionSquare,
-    description:
-      "مدیریت طرف حساب‌های متمرکز + بازمحاسبه تطابق‌ها هنگام تغییر لینک.",
-  },
-  {
-    id: "telegram-bot",
-    title: "۵) Edge Function: ربات استعلام تلگرام",
-    filename: "telegram-bot.ts",
-    language: "typescript",
-    code: TELEGRAM_BOT_FN_V2,
-    icon: Send,
-    description:
-      "ربات تلگرام: اتصال با کد ۶ رقمی که ادمین می‌دهد، مانده و تراکنش‌ها مطابق سطح دسترسی (گام ۷).",
+      "ساختار پایه PostgreSQL + RLS + is_admin/make_admin. فقط اگر پروژه‌ی خالی دارید؛ نصب موجود فقط از گام ۱ شروع می‌کند.",
   },
   {
     id: "telegram-schema",
-    title: "۶) SQL تلگرام (افزودنی — بدون حذف داده)",
+    title: "۷) SQL تلگرام (فقط نصب از صفر)",
     filename: "telegram-schema.sql",
     language: "sql",
     code: TELEGRAM_SCHEMA_SQL,
     icon: Database,
     description:
-      "جدول‌های تلگرام + دسترسی ادمین به کدها + ستون telegram_enabled — برای نصب‌های موجود هم لازم است.",
+      "جدول‌های تلگرام + telegram_enabled. برای نصب‌های موجود اجرا شده و نیازی به تکرار ندارد.",
   },
 ];
 
@@ -165,23 +190,99 @@ export function SetupTab() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* ┌ نشانهٔ نسخه — کارت اول تب راه‌اندازی ┐ */}
+      <Card className="border-emerald-300/80 dark:border-emerald-800/60 overflow-hidden">
+        <div className="h-1 bg-gradient-to-l from-emerald-500 via-emerald-400 to-emerald-300" />
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600/10 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+              <GitBranch className="h-4.5 w-4.5" />
+            </span>
+            <CardTitle className="text-base">نسخهٔ فعلی مصنوعات دیپلوی</CardTitle>
+            <Badge className="bg-emerald-600 text-white h-6 px-2.5 text-xs font-bold" dir="ltr">
+              v{toPersianDigits(APP_VERSION)}
+            </Badge>
+          </div>
+          <CardDescription>
+            اگر این نسخه را می‌بینید یعنی کد frontend شما به‌روز است؛ برای به‌روز بودن
+            سمت سرور، SQL و Edge Function‌های همین صفحه را با همین نسخه مجدد Deploy کنید.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-3">
+          {/* تاریخ و ساعت ساخت */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              variant="outline"
+              className="h-7 gap-1.5 border-emerald-300/80 bg-emerald-50/70 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              ساخت: {APP_BUILD_DATE}
+            </Badge>
+            <Badge
+              variant="outline"
+              className="h-7 gap-1.5 border-emerald-300/80 bg-emerald-50/70 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              ساعت: <span dir="ltr">{APP_BUILD_TIME}</span>
+            </Badge>
+            <Badge variant="secondary" className="h-7">
+              به وقت تهران — تقویم شمسی
+            </Badge>
+          </div>
+          {/* تغییرات این نسخه */}
+          <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20 p-3">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+              <Sparkles className="h-3.5 w-3.5" />
+              تغییرات این نسخه:
+            </div>
+            <ul className="space-y-1.5">
+              {APP_CHANGES.map((ch, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs leading-5 text-emerald-900 dark:text-emerald-200">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                  {ch}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {/* تاریخچهٔ نسخه‌ها */}
+          <details className="group rounded-lg border bg-muted/30 dark:bg-muted/10 px-3 py-2">
+            <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-muted-foreground select-none">
+              <History className="h-3.5 w-3.5" />
+              تاریخچهٔ نسخه‌ها
+            </summary>
+            <ul className="mt-2 space-y-1.5 border-t pt-2">
+              {VERSION_HISTORY.map((v) => (
+                <li key={v.version} className="text-[11px] leading-5 text-muted-foreground">
+                  <span className="font-mono font-bold" dir="ltr">v{v.version}</span>
+                  {" — "}
+                  <span>{v.date}</span>
+                  {" — "}
+                  <span>{v.note}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </CardContent>
+      </Card>
+
       {/* هشدار راه‌اندازی */}
       <Card className="border-emerald-200/70 dark:border-emerald-900/50">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Rocket className="h-5 w-5 text-primary" />
-            راه‌اندازی نسخه ۲.۰ روی Supabase
+            راه‌اندازی نسخه ۳.۰ روی Supabase
           </CardTitle>
           <CardDescription>
-            شش مصنوعه زیر را به‌ترتیب در Supabase دیپلوی کنید: ابتدا SQL
-            Schema، سپس چهار Edge Function (راختی: ربات تلگرام اختیاری است).
-            در پایان، کد frontend (دکمه دانلود پایین) را به GitHub/Vercel ببرید.
+            نصب موجود: فقط مصنوعه ۱ (مهاجرت SQL) را اجرا و چهار Edge Function را
+            با نسخه v3 جایگزین کنید. نصب از صفر: ۶ و ۷ را هم قبل از ۱ اجرا
+            کنید. در پایان کد frontend (دکمه دانلود پایین) را به GitHub/Vercel
+            ببرید.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0 space-y-3">
           {/* دانلود کد frontend */}
           <a
-            href="/my-accounting-app-v2.zip?v=11"
+            href="/my-accounting-app-v2.zip?v=14"
             download
             className="flex items-center justify-between gap-3 rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 transition-colors"
           >
@@ -191,14 +292,14 @@ export function SetupTab() {
               </div>
               <div className="min-w-0">
                 <div className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
-                  دانلود کد frontend نسخه ۲.۰
+                  دانلود کد frontend نسخه {toPersianDigits(APP_VERSION)}
                 </div>
                 <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
-                  فایل ZIP — شامل پوشه src/ + پیکربندی + README
+                  فایل ZIP — شامل پوشه src/ + supabase/ + پیکربندی + README
                 </div>
               </div>
             </div>
-            <Badge className="bg-emerald-600 text-white">my-accounting-app-v2.zip</Badge>
+            <Badge className="bg-emerald-600 text-white">my-accounting-app-v2.zip (v3)</Badge>
           </a>
           <div className="rounded-md bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/50 p-3 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
             <div className="flex items-center gap-1.5 font-medium">
@@ -289,12 +390,12 @@ export function SetupTab() {
             مراحل دیپلوی (گام‌به‌گام)
           </CardTitle>
           <CardDescription>
-            پس از آماده‌شدن چهار مصنوعه بالا، این شش گام را به‌ترتیب طی کنید.
+            پس از آماده‌شدن مصنوعات بالا، این چهار گام را به‌ترتیب طی کنید.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <ol className="divide-y">
-            {DEPLOYMENT_STEPS_V2.map((step, i) => (
+            {DEPLOYMENT_STEPS_V3.map((step, i) => (
               <li key={i} className="px-4 py-3">
                 <div className="flex items-start gap-3">
                   <div className="h-6 w-6 shrink-0 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">

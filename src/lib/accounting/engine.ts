@@ -1,20 +1,20 @@
-// موتور حسابداری چندکاربری — نسخه ۲.۰
+// موتور حسابداری چندکاربری — نسخه ۳.۰ (تطابق دوطرفه حذف شد)
 // ============================================================
-// ۱) محاسبه مانده خالص برای هر طرف حساب در دفتر یک کاربر.
-// ۲) منطق تطابق بین‌کاربری: آیا دو تراکنش (در دو دفتر متفاوت) یک رویداد
-//    واقعی را توصیف می‌کنند؟
+// ۱) محاسبه مانده خالص هر طرف حساب در دفتر یک کاربر — بر پایه شش kind.
+// ۲) جمع‌بندی دسته‌بندی‌ها.
+// ۳) دید دوجانبه: تراکنش‌هایی که دیگران روی «طرف‌حساب من» ثبت کرده‌اند.
 //
 // قرارداد علامت‌گذاری:
-//   net = totalReceived − totalPaid
-//   net  > 0  →  بدهی   (من بدهکارم)
-//   net  < 0  →  طلب    (طرف حساب بدهکار است)
-//   net === 0 →  تسویه
+//   net = totalReceivedLike − totalPaidLike
+//   receivedLike (دریافت از، ثبت بدهی، ثبت بدهی اولیه) → net ↑ → بدهکارم
+//   paidLike    (پرداخت به، ثبت طلب، ثبت طلب اولیه)     → net ↓ → طلبکارم
+//   net > 0 → بدهی من؛ net < 0 → طلب من؛ net === 0 → تسویه
 
 import {
   Counterparty,
-  MatchStatus,
   Transaction,
-  TxDirection,
+  TxnKind,
+  isReceivedLike,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -23,16 +23,14 @@ import {
 
 export interface ContactBalance {
   counterpartyId: string;
-  totalReceived: number; // جمع «دریافت از»
-  totalPaid: number; // جمع «پرداخت به»
+  totalReceived: number; // جمع kinds دریافت‌مانند
+  totalPaid: number; // جمع kinds پرداخت‌مانند
   net: number; // received − paid
-  // نمایش‌محور:
-  receivable: number; // max(−net, 0)  → طلب باز
-  payable: number; // max( net, 0)  → بدهی باز
+  receivable: number; // max(−net, 0) → طلب باز من
+  payable: number; // max( net, 0) → بدهی باز من
   transactionCount: number;
 }
 
-// مانده یک طرف حساب مشخص در دفتر یک کاربر
 export function computeContactBalance(
   userId: string,
   counterpartyId: string,
@@ -47,7 +45,7 @@ export function computeContactBalance(
   let totalReceived = 0;
   let totalPaid = 0;
   for (const t of relevant) {
-    if (t.direction === "received_from") totalReceived += t.amount;
+    if (isReceivedLike(t.kind)) totalReceived += t.amount;
     else totalPaid += t.amount;
   }
   const net = totalReceived - totalPaid;
@@ -64,14 +62,13 @@ export function computeContactBalance(
 
 export interface LedgerBalance {
   byContact: ContactBalance[];
-  totalReceivable: number; // جمع طلب‌ها
-  totalPayable: number; // جمع بدهی‌ها
+  totalReceivable: number;
+  totalPayable: number;
   totalReceived: number;
   totalPaid: number;
   netComputed: number;
 }
 
-// مانده کل دفتر یک کاربر (فقط طرف حساب‌هایی که حداقل یک تراکنش دارند)
 export function computeLedgerBalance(
   userId: string,
   transactions: Transaction[],
@@ -90,9 +87,6 @@ export function computeLedgerBalance(
     totalPayable: byContact.reduce((s, c) => s + c.payable, 0),
     totalReceived: byContact.reduce((s, c) => s + c.totalReceived, 0),
     totalPaid: byContact.reduce((s, c) => s + c.totalPaid, 0),
-    // خالص به‌صورت طلب منهای بدهی تعریف می‌شود:
-    //   netComputed > 0 → طلب خالص (بیشتر طلب‌کارید)
-    //   netComputed < 0 → بدهی خالص (بیشتر بدهکارید)
     netComputed:
       byContact.reduce((s, c) => s + c.receivable, 0) -
       byContact.reduce((s, c) => s + c.payable, 0),
@@ -100,83 +94,85 @@ export function computeLedgerBalance(
 }
 
 // ---------------------------------------------------------------------------
-// تطابق بین‌کاربری
+// جمع‌بندی دسته‌بندی‌ها (دفتر یک کاربر)
 // ---------------------------------------------------------------------------
 
-// آیا دو تراکنش (در دو دفتر متفاوت) یک رویداد واقعی را توصیف می‌کنند؟
-//
-// شرایط:
-//   - هر دو POSTED
-//   - userId متفاوت
-//   - مبلغ و واحد برابر
-//   - تاریخ مؤثر برابر
-//   - جهت‌ها متضاد (یکی received_from، دیگری paid_to) — یعنی یک نفر داده،
-//     دیگری گرفته
-//   - طرف حسابِ تراکنش ۱ به کاربرِ تراکنش ۲ لینک باشد (cp1.linkedUserId === t2.userId)
-//   - طرف حسابِ تراکنش ۲ به کاربرِ تراکنش ۱ لینک باشد (cp2.linkedUserId === t1.userId)
-//
-// نمونه:
-//   t1 (در دفتر A = وحید): direction=paid_to,    counterparty=فائزه (linked→user B)
-//   t2 (در دفتر B = فائزه): direction=received_from, counterparty=وحید (linked→user A)
-//   → MATCH (رویداد: وحید به فائزه ۱M پرداخت کرد)
-export function isMatchingPair(
-  t1: Transaction,
-  t2: Transaction,
-  counterparties: Counterparty[]
-): boolean {
-  if (t1.status !== "POSTED" || t2.status !== "POSTED") return false;
-  if (t1.userId === t2.userId) return false; // باید دو دفتر متفاوت
-  if (t1.amount !== t2.amount) return false;
-  if (t1.currency !== t2.currency) return false;
-  if (t1.effectiveAt !== t2.effectiveAt) return false;
-  if (t1.direction === t2.direction) return false; // باید متضاد
-
-  const cp1 = counterparties.find((c) => c.id === t1.counterpartyId);
-  const cp2 = counterparties.find((c) => c.id === t2.counterpartyId);
-  if (!cp1 || !cp2) return false;
-  if (cp1.linkedUserId !== t2.userId) return false;
-  if (cp2.linkedUserId !== t1.userId) return false;
-  return true;
+export interface CategoryTotal {
+  categoryId: string | null;
+  claimTotal: number; // جمع مبالغ پرداخت‌مانند (طرف طلبکار شد)
+  debtTotal: number; // جمع مبالغ دریافت‌مانند (طرف بدهکار شد)
+  net: number; // claim − debt (خودِ net منفی‌شده)
+  count: number;
 }
 
-// یافتن تراکنش تطبیق‌یافته برای t در میان همه تراکنش‌ها
-export function findMatch(
-  t: Transaction,
-  allTransactions: Transaction[],
-  counterparties: Counterparty[]
-): Transaction | null {
-  const cp = counterparties.find((c) => c.id === t.counterpartyId);
-  // طرف حساب به کاربری لینک نیست → تطابق معنا ندارد
-  if (!cp || !cp.linkedUserId) return null;
-
-  for (const other of allTransactions) {
-    if (other.id === t.id) continue;
-    if (other.userId !== cp.linkedUserId) continue;
-    if (isMatchingPair(t, other, counterparties)) {
-      return other;
-    }
+export function computeCategoryTotals(
+  userId: string,
+  transactions: Transaction[]
+): CategoryTotal[] {
+  const posted = transactions.filter(
+    (t) => t.userId === userId && t.status === "POSTED"
+  );
+  const map = new Map<string, CategoryTotal>();
+  for (const t of posted) {
+    const key = t.categoryId ?? "";
+    const row =
+      map.get(key) ??
+      { categoryId: t.categoryId ?? null, claimTotal: 0, debtTotal: 0, net: 0, count: 0 };
+    if (isReceivedLike(t.kind)) row.debtTotal += t.amount;
+    else row.claimTotal += t.amount;
+    row.count += 1;
+    map.set(key, row);
   }
-  return null;
+  const rows = Array.from(map.values()).map((r) => ({
+    ...r,
+    net: r.claimTotal - r.debtTotal,
+  }));
+  rows.sort((a, b) => Math.abs(b.claimTotal + b.debtTotal) - Math.abs(a.claimTotal + a.debtTotal));
+  return rows;
 }
 
-// محاسبه وضعیت تطابق یک تراکنش
-export function computeMatchStatus(
-  t: Transaction,
-  allTransactions: Transaction[],
+// ---------------------------------------------------------------------------
+// دید دوجانبه: تراکنش‌های دیگران درباره من
+// ---------------------------------------------------------------------------
+
+export interface OthersAboutMe {
+  transactions: Transaction[];
+  byOwner: Array<{
+    ownerId: string;
+    transactions: Transaction[];
+    /** مجموع اثر آینه‌ای: مثبت = طلب من از او؛ منفی = بدهی من به او */
+    mirroredNet: number;
+  }>;
+}
+
+// تراکنش‌هایی که کاربران دیگر روی طرف‌حسابِ لینک‌شده به «من» ثبت کرده‌اند
+export function computeOthersAboutMe(
+  meId: string,
+  transactions: Transaction[],
   counterparties: Counterparty[]
-): { status: MatchStatus; matchedId: string | null } {
-  if (t.status !== "POSTED") {
-    return { status: "unmatched", matchedId: null };
+): OthersAboutMe {
+  const myCpIds = new Set(
+    counterparties
+      .filter((c) => c.linkedUserId === meId)
+      .map((c) => c.id)
+  );
+  const rows = transactions.filter(
+    (t) => t.userId !== meId && myCpIds.has(t.counterpartyId) && t.status === "POSTED"
+  );
+  const byOwnerMap = new Map<string, Transaction[]>();
+  for (const t of rows.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    const arr = byOwnerMap.get(t.userId) ?? [];
+    arr.push(t);
+    byOwnerMap.set(t.userId, arr);
   }
-  const cp = counterparties.find((c) => c.id === t.counterpartyId);
-  if (!cp || !cp.linkedUserId) {
-    return { status: "unmatched", matchedId: null };
-  }
-  const match = findMatch(t, allTransactions, counterparties);
-  if (match) {
-    return { status: "matched", matchedId: match.id };
-  }
-  return { status: "pending", matchedId: null };
+  const byOwner = Array.from(byOwnerMap.entries())
+    .map(([ownerId, txns]) => ({
+      ownerId,
+      transactions: txns,
+      mirroredNet: txns.reduce((s, t) => s + (isReceivedLike(t.kind) ? t.amount : -t.amount), 0),
+    }))
+    .sort((a, b) => Math.abs(b.mirroredNet) - Math.abs(a.mirroredNet));
+  return { transactions: rows, byOwner };
 }
 
 // ---------------------------------------------------------------------------
@@ -184,12 +180,23 @@ export function computeMatchStatus(
 // ---------------------------------------------------------------------------
 
 export function validateTransactionInput(input: {
-  direction: TxDirection;
+  kind: TxnKind;
   amount: number;
   counterpartyId: string;
 }): { ok: boolean; error?: string } {
   if (!input.counterpartyId) {
     return { ok: false, error: "طرف حساب باید انتخاب شود." };
+  }
+  const VALID_KINDS = [
+    "opening_claim",
+    "opening_debt",
+    "claim",
+    "debt",
+    "paid_to",
+    "received_from",
+  ];
+  if (!VALID_KINDS.includes(input.kind)) {
+    return { ok: false, error: "نوع عملیات نامعتبر است." };
   }
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     return { ok: false, error: "مبلغ باید عددی مثبت باشد." };

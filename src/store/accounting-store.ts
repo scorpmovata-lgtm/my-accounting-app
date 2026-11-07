@@ -1,35 +1,35 @@
-// Zustand store — دفتر حسابداری چندکاربری (نسخه ۲.۰، حالت موک)
+// Zustand store — دفتر حسابداری چندکاربری (نسخه ۳.۰، دفترهای مستقل + دید دوجانبه)
 // ============================================================
 // این استور منبع واحدِ داده و احراز هویت است:
 //   - users: همه کاربران سامانه (ادمین + کاربران عادی با scope)
-//   - counterparties: طرف حساب‌های متمرکز (ممکن است به کاربر لینک باشند)
-//   - transactions: همه تراکنش‌ها در همه دفترها
+//   - counterparties: مشترک (ادمین، با گرنت) + شخصی (کاربر)
+//   - transactions: همه تراکنش‌ها (هر دفتر مستقل است — تطابق حذف شد)
+//   - categories: دسته‌بندی‌های شخصی هر کاربر
+//   - comments: کامنت‌های روی ردیف تراکنش (دوطرفه)
+//   - grants: اجازه دیدن طرف‌حساب مشترک در فرم ثبت
 //   - auditLogs: گزارش‌های ممیزی
-//   - currentUserId / authStatus / authError: نشست فعلی
-//
-// تطابق بین‌کاربری: پس از هر تغییر (افزودن تراکنش/کاربر/طرف حساب)،
-// recomputeMatches وضعیت تطابق همه تراکنش‌ها را به‌روزرسانی می‌کند.
 
 import { create } from "zustand";
 import {
+  AccessGrant,
   AuditLogEntry,
+  Category,
   Counterparty,
   Currency,
-  MatchStatus,
+  KIND_LABELS,
   Transaction,
-  TxDirection,
+  TxnKind,
   User,
   UserScope,
   UserRole,
 } from "@/lib/accounting/types";
-import {
-  computeMatchStatus,
-  isMatchingPair,
-  validateTransactionInput,
-} from "@/lib/accounting/engine";
+import { validateTransactionInput } from "@/lib/accounting/engine";
 import {
   seedAuditLogs,
+  seedCategories,
+  seedComments,
   seedCounterparties,
+  seedGrants,
   seedTransactions,
   seedUsers,
 } from "@/lib/accounting/mock-data";
@@ -41,13 +41,24 @@ import {
   fetchRealUsers,
   fetchRealCounterparties,
   fetchRealTransactions,
+  fetchRealCategories,
+  fetchRealComments,
+  fetchRealGrants,
   createTransactionReal,
+  createCategoryReal,
+  renameCategoryReal,
+  deleteCategoryReal,
+  createPrivateCounterpartyReal,
+  deletePrivateCounterpartyReal,
+  addCommentReal,
   adminCreateUserReal,
   adminUpdateUserReal,
   adminDeleteUserReal,
   adminCreateCounterpartyReal,
   adminUpdateCounterpartyReal,
   adminDeleteCounterpartyReal,
+  adminGrantCpReal,
+  adminRevokeCpReal,
 } from "@/lib/supabase/real";
 
 // ---------------------------------------------------------------------------
@@ -55,12 +66,13 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface AddTransactionInput {
-  direction: TxDirection;
+  kind: TxnKind;
   counterpartyId: string;
   amount: number;
   currency: Currency;
   effectiveAt: string; // شمسی yyyy-mm-dd
   description?: string;
+  categoryId?: string | null;
 }
 
 export interface AddUserInput {
@@ -88,6 +100,9 @@ interface AccountingState {
   users: User[];
   counterparties: Counterparty[];
   transactions: Transaction[];
+  categories: Category[];
+  comments: TxnCommentRow[];
+  grants: AccessGrant[];
   auditLogs: AuditLogEntry[];
 
   // احراز هویت
@@ -106,13 +121,13 @@ interface AccountingState {
   updateUser: (
     id: string,
     patch: Partial<
-      Pick<User, "displayName" | "password" | "scope" | "linkedCounterpartyId">
+      Pick<User, "displayName" | "password" | "scope" | "isActive">
     >,
     actorId: string
   ) => Promise<Result>;
   deleteUser: (id: string, actorId: string) => Promise<void>;
 
-  // مدیریت طرف حساب‌ها (ادمین)
+  // مدیریت طرف حساب‌های مشترک (ادمین)
   addCounterparty: (
     input: AddCounterpartyInput,
     actorId: string
@@ -124,17 +139,40 @@ interface AccountingState {
   ) => Promise<Result>;
   deleteCounterparty: (id: string, actorId: string) => Promise<void>;
 
+  // گرنت دسترسی طرف‌حساب مشترک (ادمین)
+  grantCpAccess: (
+    userId: string,
+    counterpartyId: string,
+    actorId: string
+  ) => Promise<Result>;
+  revokeCpAccess: (
+    userId: string,
+    counterpartyId: string,
+    actorId: string
+  ) => Promise<Result>;
+
+  // دسته‌بندی شخصی
+  addCategory: (name: string) => Promise<Result>;
+  renameCategory: (id: string, name: string) => Promise<Result>;
+  deleteCategory: (id: string) => Promise<Result>;
+
+  // طرف‌حساب شخصی
+  addPrivateCounterparty: (
+    displayName: string,
+    notes?: string
+  ) => Promise<Result>;
+  deletePrivateCounterparty: (id: string) => Promise<Result>;
+
+  // کامنت روی ردیف تراکنش (دوطرفه)
+  addComment: (transactionId: string, body: string) => Promise<Result>;
+
   // تراکنش‌ها
   addTransaction: (
     input: AddTransactionInput,
     actorId: string
-  ) => Promise<Result & {
-    transaction?: Transaction;
-    matchedWith?: Transaction | null;
-  }>;
+  ) => Promise<Result & { transaction?: Transaction }>;
 
   // داخلی
-  recomputeMatches: () => void;
   logAction: (
     actorId: string,
     action: string,
@@ -144,6 +182,9 @@ interface AccountingState {
     details: string
   ) => void;
 }
+
+// نام مستعار برای جلوگیری از تداخل نام با ماژول types
+type TxnCommentRow = import("@/lib/accounting/types").TxnComment;
 
 // ---------------------------------------------------------------------------
 // ابزارها
@@ -179,6 +220,36 @@ export function normalizeInput(raw: string): string {
     .trim();
 }
 
+// آیا این کاربر می‌تواند با این طرف‌حساب تراکنش ثبت کند؟
+// (ادمین: همه مشترک‌ها + شخصی خودش؛ کاربر: مشترکِ با گرنت + شخصی خودش)
+function canUseCounterparty(
+  state: { users: User[]; grants: AccessGrant[] },
+  userId: string,
+  cp: Counterparty | undefined
+): boolean {
+  if (!cp || cp.archivedAt) return false;
+  if (cp.linkedUserId === userId) return false; // نماینده خودِ اوست
+  const user = state.users.find((u) => u.id === userId);
+  if (!user) return false;
+  if (!cp.isShared) return cp.ownerUserId === userId;
+  if (user.role === "admin") return true;
+  return state.grants.some(
+    (g) => g.userId === userId && g.counterpartyId === cp.id
+  );
+}
+
+// آیا این کاربر می‌تواند روی این تراکنش کامنت بنویسد / کامنت‌هایش را ببیند؟
+// (صاحب تراکنش یا کاربری که تراکنش درباره اوست)
+function canSeeCommentsOf(
+  state: { counterparties: Counterparty[] },
+  meId: string,
+  txn: Transaction
+): boolean {
+  if (txn.userId === meId) return true;
+  const cp = state.counterparties.find((c) => c.id === txn.counterpartyId);
+  return !!cp && cp.linkedUserId === meId;
+}
+
 // ---------------------------------------------------------------------------
 // استور
 // ---------------------------------------------------------------------------
@@ -187,10 +258,12 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   users: seedUsers,
   counterparties: seedCounterparties,
   transactions: seedTransactions,
+  categories: seedCategories,
+  comments: seedComments,
+  grants: seedGrants,
   auditLogs: seedAuditLogs,
 
   realMode,
-  // در حالت واقعی، ابتدا "loading" تا نشست بررسی شود؛ در موک "anonymous".
   authStatus: realMode ? "loading" : "anonymous",
   currentUserId: null,
   authError: null,
@@ -200,7 +273,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // -------------------------------------------------------------------------
 
   login: async (username, password) => {
-    // نرمال‌سازی ورودی — کیبورد فارسی/فاصله اضافه نباید مانع ورود شود
     const usernameNorm = normalizeInput(username).toLowerCase();
     const passwordNorm = normalizeInput(password);
     // ---- حالت واقعی ----
@@ -209,8 +281,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         await signInWithUsername(usernameNorm, passwordNorm);
         const u = await getCurrentRealUser();
         if (!u) {
-          set({ authError: "پروفایل کاربر یافت نشد." });
-          return { ok: false, error: "پروفایل کاربر یافت نشد." };
+          const msg = "پروفایل کاربر یافت نشد.";
+          set({ authError: msg });
+          return { ok: false, error: msg };
+        }
+        if (u.isActive === false) {
+          await signOutReal();
+          const msg = "حساب کاربری شما توسط مدیر غیرفعال شده است.";
+          set({ authError: msg });
+          return { ok: false, error: msg };
         }
         set({
           authStatus: "authenticated",
@@ -236,6 +315,11 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       set({ authError: "رمز عبور نادرست است." });
       return { ok: false, error: "رمز عبور نادرست است." };
     }
+    if (u.isActive === false) {
+      const msg = "حساب کاربری شما توسط مدیر غیرفعال شده است.";
+      set({ authError: msg });
+      return { ok: false, error: msg };
+    }
     set({
       authStatus: "authenticated",
       currentUserId: u.id,
@@ -248,19 +332,14 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     if (get().realMode) {
       await signOutReal();
     }
+    // داده‌ها عمداً ری‌ست نمی‌شوند: در حالت موک، تغییرات ادمین
+    // (غیرفعال‌سازی کاربر، کاربر/طرف‌حساب جدید و…) باید در همان نشست
+    // مرورگر باقی بماند تا مسیر «غیرفعال → ورود مسدود» قابل آزمایش باشد.
+    // بازگشت به داده موک فقط با reload کامل صفحه (state اولیه seeds) رخ می‌دهد.
     set({
       authStatus: "anonymous",
       currentUserId: null,
       authError: null,
-      // بازگشت به داده موک در حالت موک
-      ...(get().realMode
-        ? {}
-        : {
-            users: seedUsers,
-            counterparties: seedCounterparties,
-            transactions: seedTransactions,
-            auditLogs: seedAuditLogs,
-          }),
     });
   },
 
@@ -271,7 +350,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     if (!get().realMode) return;
     try {
       const u = await getCurrentRealUser();
-      if (!u) {
+      if (!u || u.isActive === false) {
         set({ authStatus: "anonymous" });
         return;
       }
@@ -286,18 +365,22 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     }
   },
 
-  // بارگذاری داده واقعی از Supabase
+  // بارگذاری داده واقعی از Supabase (RLS محدود می‌کند)
   loadRealData: async () => {
     if (!get().realMode) return;
     const uid_ = get().currentUserId;
     if (!uid_) return;
     try {
-      const [users, counterparties, transactions] = await Promise.all([
-        fetchRealUsers(),
-        fetchRealCounterparties(),
-        fetchRealTransactions(uid_),
-      ]);
-      set({ users, counterparties, transactions });
+      const [users, counterparties, transactions, categories, comments, grants] =
+        await Promise.all([
+          fetchRealUsers(),
+          fetchRealCounterparties(),
+          fetchRealTransactions(),
+          fetchRealCategories(),
+          fetchRealComments(),
+          fetchRealGrants(),
+        ]);
+      set({ users, counterparties, transactions, categories, comments, grants });
     } catch (e) {
       console.error("loadRealData error:", e);
     }
@@ -319,7 +402,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       }
     }
     const state = get();
-    // اعتبارسنجی
     const username = input.username.trim();
     if (!username) {
       return { ok: false, error: "نام کاربری الزامی است." };
@@ -356,6 +438,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       role: input.role,
       scope: input.role === "user" ? input.scope : undefined,
       linkedCounterpartyId: input.linkedCounterpartyId ?? null,
+      isActive: true,
       createdAt: now,
     };
     const actorName = findActorName(state.users, actorId);
@@ -401,7 +484,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     }
     if (patch.password) changes.push("رمز عبور به‌روزرسانی شد");
     if (patch.scope && patch.scope !== user.scope) {
-      changes.push(`سطح دسترسی تغییر کرد`);
+      changes.push("سطح دسترسی تغییر کرد");
+    }
+    if (patch.isActive !== undefined && patch.isActive !== user.isActive) {
+      changes.push(patch.isActive ? "فعال شد" : "غیرفعال شد");
     }
     const log: AuditLogEntry = {
       id: uid("audit"),
@@ -456,7 +542,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   },
 
   // -------------------------------------------------------------------------
-  // مدیریت طرف حساب‌ها (ادمین)
+  // مدیریت طرف حساب‌های مشترک (ادمین)
   // -------------------------------------------------------------------------
 
   addCounterparty: async (input, actorId) => {
@@ -482,7 +568,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return { ok: false, error: "کاربر لینک‌شده یافت نشد." };
       }
       linkedUsername = linkedUser.username;
-      // این کاربر قبلاً به طرف حساب دیگری لینک شده؟
       const alreadyLinked = state.counterparties.find(
         (c) => c.linkedUserId === input.linkedUserId
       );
@@ -500,6 +585,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       notes: input.notes?.trim() || undefined,
       linkedUserId: input.linkedUserId ?? null,
       linkedUsername,
+      isShared: true,
+      ownerUserId: null,
       createdBy: actorId,
       createdAt: now,
     };
@@ -512,7 +599,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       entityType: "Counterparty",
       entityId: cp.id,
       result: "success",
-      details: `افزودن طرف حساب «${cp.displayName}»${
+      details: `افزودن طرف حساب مشترک «${cp.displayName}»${
         cp.linkedUsername ? ` (لینک به کاربر ${cp.linkedUsername})` : ""
       }`,
       createdAt: now,
@@ -582,8 +669,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       counterparties: state.counterparties.map((c) => (c.id === id ? next : c)),
       auditLogs: [log, ...state.auditLogs],
     });
-    // تطابق‌ها ممکن است تغییر کنند (اگر لینک تغییر کرد)
-    get().recomputeMatches();
     return { ok: true };
   },
 
@@ -620,8 +705,295 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     };
     set({
       counterparties: state.counterparties.filter((c) => c.id !== id),
+      grants: state.grants.filter((g) => g.counterpartyId !== id),
       auditLogs: [log, ...state.auditLogs],
     });
+  },
+
+  // -------------------------------------------------------------------------
+  // گرنت دسترسی طرف‌حساب مشترک (ادمین)
+  // -------------------------------------------------------------------------
+
+  grantCpAccess: async (userId, counterpartyId, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminGrantCpReal(userId, counterpartyId);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const cp = state.counterparties.find((c) => c.id === counterpartyId);
+    const user = state.users.find((u) => u.id === userId);
+    if (!cp || !user) return { ok: false, error: "طرف حساب یا کاربر یافت نشد." };
+    if (!cp.isShared) {
+      return { ok: false, error: "این طرف حساب شخصی است و گرنت معنا ندارد." };
+    }
+    const exists = state.grants.find(
+      (g) => g.userId === userId && g.counterpartyId === counterpartyId
+    );
+    if (exists) return { ok: true };
+    const now = new Date().toISOString();
+    const actorName = findActorName(state.users, actorId);
+    set({
+      grants: [
+        ...state.grants,
+        {
+          id: uid("gr"),
+          userId,
+          counterpartyId,
+          grantedBy: actorId,
+          createdAt: now,
+        },
+      ],
+      auditLogs: [
+        {
+          id: uid("audit"),
+          actorId,
+          actorName,
+          action: "GRANT_CP_ACCESS",
+          entityType: "CounterpartyAccess",
+          entityId: counterpartyId,
+          result: "success",
+          details: `دادن دسترسی طرف‌حساب «${cp.displayName}» به «${user.displayName}»`,
+          createdAt: now,
+        },
+        ...state.auditLogs,
+      ],
+    });
+    return { ok: true };
+  },
+
+  revokeCpAccess: async (userId, counterpartyId, actorId) => {
+    if (get().realMode) {
+      try {
+        await adminRevokeCpReal(userId, counterpartyId);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const cp = state.counterparties.find((c) => c.id === counterpartyId);
+    const user = state.users.find((u) => u.id === userId);
+    const now = new Date().toISOString();
+    const actorName = findActorName(state.users, actorId);
+    set({
+      grants: state.grants.filter(
+        (g) => !(g.userId === userId && g.counterpartyId === counterpartyId)
+      ),
+      auditLogs: [
+        {
+          id: uid("audit"),
+          actorId,
+          actorName,
+          action: "REVOKE_CP_ACCESS",
+          entityType: "CounterpartyAccess",
+          entityId: counterpartyId,
+          result: "success",
+          details: `گرفتن دسترسی طرف‌حساب «${cp?.displayName ?? "—"}» از «${
+            user?.displayName ?? "—"
+          }»`,
+          createdAt: now,
+        },
+        ...state.auditLogs,
+      ],
+    });
+    return { ok: true };
+  },
+
+  // -------------------------------------------------------------------------
+  // دسته‌بندی شخصی
+  // -------------------------------------------------------------------------
+
+  addCategory: async (name) => {
+    const me = get().currentUserId;
+    if (!me) return { ok: false, error: "احراز هویت نشده." };
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, error: "نام دسته الزامی است." };
+    if (get().realMode) {
+      try {
+        const cat = await createCategoryReal(trimmed);
+        set({ categories: [...get().categories, cat] });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    if (
+      state.categories.some(
+        (c) => c.userId === me && c.name === trimmed
+      )
+    ) {
+      return { ok: false, error: "دسته‌ای با همین نام وجود دارد." };
+    }
+    set({
+      categories: [
+        ...state.categories,
+        { id: uid("cat"), userId: me, name: trimmed, createdAt: new Date().toISOString() },
+      ],
+    });
+    return { ok: true };
+  },
+
+  renameCategory: async (id, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, error: "نام دسته الزامی است." };
+    if (get().realMode) {
+      try {
+        await renameCategoryReal(id, trimmed);
+        set({
+          categories: get().categories.map((c) =>
+            c.id === id ? { ...c, name: trimmed } : c
+          ),
+        });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    set({
+      categories: get().categories.map((c) =>
+        c.id === id ? { ...c, name: trimmed } : c
+      ),
+    });
+    return { ok: true };
+  },
+
+  deleteCategory: async (id) => {
+    if (get().realMode) {
+      try {
+        await deleteCategoryReal(id);
+        set({
+          categories: get().categories.filter((c) => c.id !== id),
+          // دسته‌ی حذف‌شده از تراکنش‌ها برداشته می‌شود (FK: on delete set null)
+          transactions: get().transactions.map((t) =>
+            t.categoryId === id ? { ...t, categoryId: null } : t
+          ),
+        });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    set({
+      categories: get().categories.filter((c) => c.id !== id),
+      transactions: get().transactions.map((t) =>
+        t.categoryId === id ? { ...t, categoryId: null } : t
+      ),
+    });
+    return { ok: true };
+  },
+
+  // -------------------------------------------------------------------------
+  // طرف‌حساب شخصی
+  // -------------------------------------------------------------------------
+
+  addPrivateCounterparty: async (displayName, notes) => {
+    const me = get().currentUserId;
+    if (!me) return { ok: false, error: "احراز هویت نشده." };
+    const name = displayName.trim();
+    if (!name) return { ok: false, error: "نام طرف حساب الزامی است." };
+    if (get().realMode) {
+      try {
+        const cp = await createPrivateCounterpartyReal(name, notes);
+        set({ counterparties: [...get().counterparties, cp] });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const now = new Date().toISOString();
+    const cp: Counterparty = {
+      id: uid("cp"),
+      displayName: name,
+      notes: notes?.trim() || undefined,
+      linkedUserId: null,
+      linkedUsername: null,
+      isShared: false,
+      ownerUserId: me,
+      createdBy: me,
+      createdAt: now,
+    };
+    set({ counterparties: [...state.counterparties, cp] });
+    return { ok: true };
+  },
+
+  deletePrivateCounterparty: async (id) => {
+    const me = get().currentUserId;
+    if (!me) return { ok: false, error: "احراز هویت نشده." };
+    const state = get();
+    const cp = state.counterparties.find((c) => c.id === id);
+    if (!cp) return { ok: false, error: "طرف حساب یافت نشد." };
+    if (!cp.isShared || cp.ownerUserId !== me) {
+      return { ok: false, error: "فقط طرف‌حساب شخصی خودتان قابل حذف است." };
+    }
+    const hasTxns = state.transactions.some((t) => t.counterpartyId === id);
+    if (hasTxns) {
+      return {
+        ok: false,
+        error: "این طرف حساب تراکنش ثبت‌شده دارد و قابل حذف نیست.",
+      };
+    }
+    if (get().realMode) {
+      try {
+        await deletePrivateCounterpartyReal(id);
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    set({ counterparties: state.counterparties.filter((c) => c.id !== id) });
+    return { ok: true };
+  },
+
+  // -------------------------------------------------------------------------
+  // کامنت روی ردیف تراکنش (دوطرفه)
+  // -------------------------------------------------------------------------
+
+  addComment: async (transactionId, body) => {
+    const me = get().currentUserId;
+    if (!me) return { ok: false, error: "احراز هویت نشده." };
+    const text = body.trim();
+    if (!text) return { ok: false, error: "متن کامنت خالی است." };
+    const state = get();
+    const txn = state.transactions.find((t) => t.id === transactionId);
+    if (!txn) return { ok: false, error: "تراکنش یافت نشد." };
+    if (!canSeeCommentsOf(state, me, txn)) {
+      return {
+        ok: false,
+        error: "فقط صاحب تراکنش و کاربری که تراکنش درباره اوست می‌توانند کامنت بگذارند.",
+      };
+    }
+    const authorName = findActorName(state.users, me);
+    const now = new Date().toISOString();
+    if (get().realMode) {
+      try {
+        const cm = await addCommentReal(transactionId, text);
+        set({ comments: [...get().comments, cm] });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    set({
+      comments: [
+        ...state.comments,
+        {
+          id: uid("cm"),
+          transactionId,
+          authorId: me,
+          authorName,
+          body: text,
+          createdAt: now,
+        },
+      ],
+    });
+    return { ok: true };
   },
 
   // -------------------------------------------------------------------------
@@ -637,7 +1009,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return {
           ok: true,
           transaction: res.transaction ?? undefined,
-          matchedWith: res.matchedWith,
         };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : "خطا" };
@@ -652,17 +1023,26 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     if (!v.ok) {
       return { ok: false, error: v.error };
     }
-    // طرف حساب موجود باشد
+    // طرف حساب موجود و مجاز باشد
     const cp = state.counterparties.find((c) => c.id === input.counterpartyId);
     if (!cp) {
       return { ok: false, error: "طرف حساب یافت نشد." };
     }
-    // جلوگیری از ثبت تراکنش با طرف حسابی که خودِ همین کاربر است
-    if (cp.linkedUserId === actorId) {
+    if (!canUseCounterparty(state, actorId, cp)) {
       return {
         ok: false,
-        error: "نمی‌توان با طرف حسابی که نماینده خودِ شماست تراکنش ثبت کرد.",
+        error:
+          "شما به این طرف حساب دسترسی ندارید. (ادمین باید دسترسی بدهد یا از طرف‌حساب‌های شخصی خودتان استفاده کنید)",
       };
+    }
+    // دسته باید متعلق به خود کاربر باشد
+    if (input.categoryId) {
+      const cat = state.categories.find(
+        (c) => c.id === input.categoryId && c.userId === actorId
+      );
+      if (!cat) {
+        return { ok: false, error: "دسته‌بندی نامعتبر است." };
+      }
     }
 
     const now = new Date().toISOString();
@@ -670,42 +1050,27 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       id: uid("tx"),
       userId: actorId,
       counterpartyId: input.counterpartyId,
-      direction: input.direction,
+      kind: input.kind,
       amount: input.amount,
       currency: input.currency,
       effectiveAt: input.effectiveAt,
       createdAt: now,
       createdBy: actorId,
       description: input.description?.trim() || undefined,
+      categoryId: input.categoryId ?? null,
       status: "POSTED",
-      matchedTransactionId: null,
-      matchStatus: "pending",
       idempotencyKey: uid("idem"),
     };
 
-    // افزودن و سپس محاسبه تطابق‌ها
     set({ transactions: [txn, ...state.transactions] });
-    get().recomputeMatches();
-
-    // پیدا کردن تراکنش تطبیق‌یافته (پس از recompute)
-    const updated = get().transactions.find((t) => t.id === txn.id);
-    const matchedWith = updated?.matchedTransactionId
-      ? get().transactions.find((t) => t.id === updated.matchedTransactionId) ??
-        null
-      : null;
 
     // گزارش ممیزی
     const actorName = findActorName(state.users, actorId);
     const cpName = cp.displayName;
-    const dirLabel =
-      input.direction === "received_from" ? "دریافت از" : "پرداخت به";
-    const matchInfo = updated?.matchStatus;
-    const matchDetail =
-      matchInfo === "matched"
-        ? ` — تطبیق‌یافته با سمت ${cp.linkedUsername ?? "طرف مقابل"}`
-        : matchInfo === "pending"
-        ? " — در انتظار ثبت توسط طرف مقابل"
-        : "";
+    const kindLabel = KIND_LABELS[input.kind];
+    const cat = input.categoryId
+      ? state.categories.find((c) => c.id === input.categoryId)
+      : null;
     const log: AuditLogEntry = {
       id: uid("audit"),
       actorId,
@@ -714,33 +1079,19 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       entityType: "Transaction",
       entityId: txn.id,
       result: "success",
-      details: `ثبت «${dirLabel} ${cpName} — ${input.amount.toLocaleString(
+      details: `ثبت «${kindLabel} ${cpName} — ${input.amount.toLocaleString(
         "en-US"
-      )} تومان در ${input.effectiveAt}»${matchDetail}`,
+      )} تومان در ${input.effectiveAt}»${cat ? ` — دسته: ${cat.name}` : ""}`,
       createdAt: now,
     };
     set({ auditLogs: [log, ...get().auditLogs] });
 
-    return { ok: true, transaction: updated ?? txn, matchedWith };
+    return { ok: true, transaction: txn };
   },
 
   // -------------------------------------------------------------------------
   // داخلی
   // -------------------------------------------------------------------------
-
-  recomputeMatches: () => {
-    const state = get();
-    const { transactions, counterparties } = state;
-    const updated = transactions.map((t) => {
-      const result = computeMatchStatus(t, transactions, counterparties);
-      return {
-        ...t,
-        matchStatus: result.status,
-        matchedTransactionId: result.matchedId,
-      };
-    });
-    set({ transactions: updated });
-  },
 
   logAction: (actorId, action, entityType, entityId, result, details) => {
     const state = get();
@@ -779,13 +1130,53 @@ export function selectUserTransactions(
     .filter((t) => t.userId === userId)
     .slice()
     .sort((a, b) => {
-      // نزولی بر اساس effectiveAt شمسی (رشته‌ای قابل مرتب‌سازی است)
       if (a.effectiveAt !== b.effectiveAt) {
         return b.effectiveAt.localeCompare(a.effectiveAt);
       }
-      // اگر تاریخ برابر، بر اساس زمان ثبت نزولی
       return b.createdAt.localeCompare(a.createdAt);
     });
+}
+
+// طرف‌حساب‌های قابل استفاده در فرم ثبتِ این کاربر
+// (مشترکِ با گرنت + شخصی خودش؛ ادمین: همه مشترک‌ها + شخصی خودش)
+export function selectUsableCounterparties(
+  state: AccountingState,
+  userId: string
+): Counterparty[] {
+  const user = state.users.find((u) => u.id === userId);
+  if (!user) return [];
+  return state.counterparties.filter((cp) => {
+    if (cp.archivedAt) return false;
+    if (cp.linkedUserId === userId) return false;
+    if (!cp.isShared) return cp.ownerUserId === userId;
+    if (user.role === "admin") return true;
+    return state.grants.some(
+      (g) => g.userId === userId && g.counterpartyId === cp.id
+    );
+  });
+}
+
+// کامنت‌های قابل‌مشاهده‌ی این کاربر برای یک تراکنش
+export function selectCommentsForTxn(
+  state: AccountingState,
+  meId: string,
+  transactionId: string
+): TxnCommentRow[] {
+  const txn = state.transactions.find((t) => t.id === transactionId);
+  if (!txn) return [];
+  if (!canSeeCommentsOf(state, meId, txn)) return [];
+  return state.comments
+    .filter((c) => c.transactionId === transactionId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// تعداد کامنت‌های قابل‌مشاهده برای یک تراکنش (برای نشان روی ردیف)
+export function selectCommentCount(
+  state: AccountingState,
+  meId: string,
+  transactionId: string
+): number {
+  return selectCommentsForTxn(state, meId, transactionId).length;
 }
 
 // یافتن طرف حساب با id
@@ -804,13 +1195,5 @@ export function selectUser(
   return state.users.find((u) => u.id === id);
 }
 
-// وضعیت تطابق برچسب‌خورده برای نمایش
-export function matchStatusLabel(status: MatchStatus): string {
-  if (status === "matched") return "تطبیق‌یافته";
-  if (status === "pending") return "در انتظار طرف مقابل";
-  return "شخص عادی";
-}
-
 // صادرات کمکی برای استفاده در کامپوننت‌ها
 export type { Transaction, User, Counterparty };
-export { isMatchingPair };

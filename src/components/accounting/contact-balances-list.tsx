@@ -1,6 +1,6 @@
 "use client";
 
-import { Link2, Users, ArrowLeftRight } from "lucide-react";
+import { Link2, Users, ArrowLeftRight, Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -79,6 +79,15 @@ export function ContactBalancesList() {
                           >
                             <Link2 className="h-2.5 w-2.5" />
                             {cp.linkedUsername}
+                          </Badge>
+                        )}
+                        {!cp.isShared && (
+                          <Badge
+                            variant="outline"
+                            className="h-5 gap-1 px-1.5 text-[10px] border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-400"
+                          >
+                            <Lock className="h-2.5 w-2.5" />
+                            شخصی
                           </Badge>
                         )}
                       </div>

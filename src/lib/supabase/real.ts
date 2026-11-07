@@ -1,18 +1,25 @@
-// لایه اتصال به Supabase واقعی (real mode) — نسخه ۲.۰
+// لایه اتصال به Supabase واقعی (real mode) — نسخه ۳.۰
 // ============================================================
-// این ماژول فقط زمانی فعال می‌شود که متغیرهای محیطی زیر تنظیم شده باشند:
-//   NEXT_PUBLIC_SUPABASE_URL
-//   NEXT_PUBLIC_SUPABASE_ANON_KEY
-// در ساندباکس این متغیرها تنظیم نشده‌اند → realMode=false → حالت موک.
-// در Vercel (با env vars) → realMode=true → اتصال واقعی.
+// فعال‌شدن با متغیرهای محیطی:
+//   NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY
+// در ساندباکس تنظیم نشده‌اند → realMode=false → حالت موک.
+//
+// نسخه ۳: خواندن‌ها با RLS محدود شده‌اند:
+//   - counterparties: فقط مشترک‌هایِ مجاز + شخصی خودم
+//   - transactions: دفتر خودم + تراکنش‌هایی که دیگران درباره من ثبت کرده‌اند
+//   - categories/comments/grants: طبق RLS
+// نوشتن تراکنش/مدیریت از طریق Edge Function (service_role) و بقیه با RLS مستقیم.
 //
 // احراز هویت با username: email = username + "@accounting.local"
-// (چون Supabase Auth email-based است؛ username واقعی در user_profiles).
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
+  AccessGrant,
+  Category,
   Counterparty,
   Transaction,
+  TxnComment,
+  TxnKind,
   User,
 } from "@/lib/accounting/types";
 
@@ -86,11 +93,12 @@ function mapUser(r: any): User {
   return {
     id: r.id,
     username: r.username,
-    password: "", // هرگز رمز را برنمی‌گردانیم
+    password: "",
     displayName: r.display_name,
     role: r.role,
     scope: r.scope ?? undefined,
     linkedCounterpartyId: r.linked_counterparty_id ?? null,
+    isActive: r.is_active !== false,
     createdAt: r.created_at,
   };
 }
@@ -102,6 +110,8 @@ function mapCounterparty(r: any): Counterparty {
     notes: r.notes ?? undefined,
     linkedUserId: r.linked_user_id ?? null,
     linkedUsername: r.linked_username ?? null,
+    isShared: r.is_shared !== false,
+    ownerUserId: r.owner_user_id ?? null,
     createdBy: r.created_by,
     createdAt: r.created_at,
     archivedAt: r.archived_at ?? null,
@@ -113,17 +123,41 @@ function mapTransaction(r: any): Transaction {
     id: r.id,
     userId: r.user_id,
     counterpartyId: r.counterparty_id,
-    direction: r.direction,
+    kind: r.kind as TxnKind,
     amount: Number(r.amount),
     currency: r.currency,
     effectiveAt: r.effective_at,
     createdAt: r.created_at,
     createdBy: r.created_by,
     description: r.description ?? undefined,
+    categoryId: r.category_id ?? null,
     status: r.status,
-    matchedTransactionId: r.matched_transaction_id ?? null,
-    matchStatus: r.match_status,
     idempotencyKey: r.idempotency_key,
+  };
+}
+
+function mapCategory(r: any): Category {
+  return { id: r.id, userId: r.user_id, name: r.name, createdAt: r.created_at };
+}
+
+function mapComment(r: any): TxnComment {
+  return {
+    id: r.id,
+    transactionId: r.transaction_id,
+    authorId: r.author_id,
+    authorName: r.author_name,
+    body: r.body,
+    createdAt: r.created_at,
+  };
+}
+
+function mapGrant(r: any): AccessGrant {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    counterpartyId: r.counterparty_id,
+    grantedBy: r.granted_by,
+    createdAt: r.created_at,
   };
 }
 
@@ -148,7 +182,7 @@ export async function signOutReal(): Promise<void> {
   await c.auth.signOut();
 }
 
-// بازیابی نشست ذخیره‌شده (برای refresh صفحه)
+// بازیابی نشست ذخیره‌شده (برای refresh صفحه) — کاربر غیرفعال رد می‌شود
 export async function getCurrentRealUser(): Promise<User | null> {
   const c = getClient();
   if (!c) return null;
@@ -161,11 +195,15 @@ export async function getCurrentRealUser(): Promise<User | null> {
     .eq("id", uid)
     .maybeSingle();
   if (!prof) return null;
+  if (prof.is_active === false) {
+    await signOutReal();
+    throw new Error("حساب کاربری شما توسط مدیر غیرفعال شده است.");
+  }
   return mapUser(prof);
 }
 
 // ---------------------------------------------------------------------------
-// خواندن داده
+// خواندن داده (RLS خودش محدود می‌کند)
 // ---------------------------------------------------------------------------
 
 export async function fetchRealUsers(): Promise<User[]> {
@@ -188,15 +226,143 @@ export async function fetchRealCounterparties(): Promise<Counterparty[]> {
   return (data || []).map(mapCounterparty);
 }
 
-export async function fetchRealTransactions(userId: string): Promise<Transaction[]> {
+// دفتر خودم + تراکنش‌هایی که دیگران درباره من ثبت کرده‌اند (RLS)
+export async function fetchRealTransactions(): Promise<Transaction[]> {
   const c = getClient();
   if (!c) return [];
   const { data } = await c
     .from("transactions")
     .select("*")
-    .eq("user_id", userId)
+    .eq("status", "POSTED")
     .order("created_at", { ascending: false });
   return (data || []).map(mapTransaction);
+}
+
+export async function fetchRealCategories(): Promise<Category[]> {
+  const c = getClient();
+  if (!c) return [];
+  const { data } = await c
+    .from("categories")
+    .select("*")
+    .order("created_at");
+  return (data || []).map(mapCategory);
+}
+
+export async function fetchRealComments(): Promise<TxnComment[]> {
+  const c = getClient();
+  if (!c) return [];
+  const { data } = await c
+    .from("transaction_comments")
+    .select("*")
+    .order("created_at", { ascending: true });
+  return (data || []).map(mapComment);
+}
+
+// گرنت‌ها: کاربر فقط خودش را می‌بیند؛ ادمین همه را (RLS)
+export async function fetchRealGrants(): Promise<AccessGrant[]> {
+  const c = getClient();
+  if (!c) return [];
+  const { data } = await c
+    .from("counterparty_access")
+    .select("*")
+    .order("created_at");
+  return (data || []).map(mapGrant);
+}
+
+// ---------------------------------------------------------------------------
+// دسته‌بندی شخصی (RLS: مالک)
+// ---------------------------------------------------------------------------
+
+export async function createCategoryReal(name: string): Promise<Category> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const uid = (await c.auth.getSession()).data.session?.user.id;
+  if (!uid) throw new Error("احراز هویت نشده.");
+  const { data, error } = await c
+    .from("categories")
+    .insert({ user_id: uid, name })
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message);
+  return mapCategory(data);
+}
+
+export async function renameCategoryReal(id: string, name: string): Promise<void> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const { error } = await c.from("categories").update({ name }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteCategoryReal(id: string): Promise<void> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const { error } = await c.from("categories").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// ---------------------------------------------------------------------------
+// طرف‌حساب شخصی (RLS: مالک)
+// ---------------------------------------------------------------------------
+
+export async function createPrivateCounterpartyReal(
+  displayName: string,
+  notes?: string
+): Promise<Counterparty> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const uid = (await c.auth.getSession()).data.session?.user.id;
+  if (!uid) throw new Error("احراز هویت نشده.");
+  const { data, error } = await c
+    .from("counterparties")
+    .insert({
+      display_name: displayName,
+      notes: notes || null,
+      is_shared: false,
+      owner_user_id: uid,
+      created_by: uid,
+    })
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message);
+  return mapCounterparty(data);
+}
+
+export async function deletePrivateCounterpartyReal(id: string): Promise<void> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const { error } = await c.from("counterparties").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+// ---------------------------------------------------------------------------
+// کامنت روی تراکنش (RLS: نویسنده + تراکنش مرئی)
+// ---------------------------------------------------------------------------
+
+export async function addCommentReal(
+  transactionId: string,
+  body: string
+): Promise<TxnComment> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const sess = (await c.auth.getSession()).data.session;
+  if (!sess) throw new Error("احراز هویت نشده.");
+  const authorName =
+    (sess.user.user_metadata as any)?.display_name ||
+    (sess.user.email || "").split("@")[0] ||
+    "کاربر";
+  const { data, error } = await c
+    .from("transaction_comments")
+    .insert({
+      transaction_id: transactionId,
+      author_id: sess.user.id,
+      author_name: authorName,
+      body,
+    })
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message);
+  return mapComment(data);
 }
 
 // ---------------------------------------------------------------------------
@@ -204,24 +370,26 @@ export async function fetchRealTransactions(userId: string): Promise<Transaction
 // ---------------------------------------------------------------------------
 
 export interface CreateTxnInput {
-  direction: "received_from" | "paid_to";
+  kind: TxnKind;
   counterpartyId: string;
   amount: number;
   currency: "IRT" | "IRR";
   effectiveAt: string;
   description?: string;
+  categoryId?: string | null;
 }
 
 export async function createTransactionReal(
   input: CreateTxnInput
-): Promise<{ transaction: Transaction | null; matchedWith: Transaction | null }> {
+): Promise<{ transaction: Transaction | null }> {
   const res = await callEF("create-transaction", "POST", {
-    direction: input.direction,
+    kind: input.kind,
     counterpartyId: input.counterpartyId,
     amount: input.amount,
     currency: input.currency,
     effectiveAt: input.effectiveAt,
     description: input.description,
+    categoryId: input.categoryId ?? null,
     idempotencyKey:
       typeof crypto !== "undefined" && crypto.randomUUID
         ? crypto.randomUUID()
@@ -229,7 +397,6 @@ export async function createTransactionReal(
   });
   return {
     transaction: res.transaction ? mapTransaction(res.transaction) : null,
-    matchedWith: res.matchedWith ? mapTransaction(res.matchedWith) : null,
   };
 }
 
@@ -246,7 +413,12 @@ export async function adminCreateUserReal(input: {
 
 export async function adminUpdateUserReal(
   id: string,
-  patch: { displayName?: string; password?: string; scope?: string }
+  patch: {
+    displayName?: string;
+    password?: string;
+    scope?: string;
+    isActive?: boolean;
+  }
 ): Promise<any> {
   return callEF("admin-users", "PUT", patch, { id });
 }
@@ -272,4 +444,27 @@ export async function adminUpdateCounterpartyReal(
 
 export async function adminDeleteCounterpartyReal(id: string): Promise<any> {
   return callEF("admin-counterparties", "DELETE", undefined, { id });
+}
+
+// گرنت دسترسی طرف‌حساب مشترک (ادمین)
+export async function adminGrantCpReal(
+  userId: string,
+  counterpartyId: string
+): Promise<any> {
+  return callEF("admin-counterparties", "POST", {
+    action: "grant",
+    userId,
+    counterpartyId,
+  });
+}
+
+export async function adminRevokeCpReal(
+  userId: string,
+  counterpartyId: string
+): Promise<any> {
+  return callEF("admin-counterparties", "POST", {
+    action: "revoke",
+    userId,
+    counterpartyId,
+  });
 }
