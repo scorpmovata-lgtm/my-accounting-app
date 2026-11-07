@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpenText, LogIn, Loader2, Moon, Sun, Info } from "lucide-react";
+import { BookOpenText, LogIn, Loader2, Moon, Sun, Info, Eye, EyeOff } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,7 @@ export function LoginScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -110,22 +111,38 @@ export function LoginScreen() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">رمز عبور</Label>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  dir="ltr"
-                  className="text-right"
-                  placeholder="••••"
-                  value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (authError) clearAuthError();
-                  }}
-                  disabled={submitting}
-                  required
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    dir="ltr"
+                    className="text-right pl-10"
+                    placeholder="••••"
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (authError) clearAuthError();
+                    }}
+                    disabled={submitting}
+                    required
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPassword ? "پنهان کردن رمز" : "نمایش رمز"}
+                    aria-pressed={showPassword}
+                    onClick={() => setShowPassword((v) => !v)}
+                    tabIndex={-1}
+                    className="absolute inset-y-0 left-0 flex h-11 w-10 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
               </div>
 
               {authError && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Plus, Loader2, Link2, Info, CheckCircle2, Lock, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,7 +62,7 @@ export function TransactionFormDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="flex max-h-[100dvh] flex-col gap-0 overflow-hidden p-0 sm:max-h-[90vh] sm:max-w-lg">
         {open ? <TransactionFormBody onClose={() => setOpen(false)} /> : null}
       </DialogContent>
     </Dialog>
@@ -85,6 +85,10 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
   const [effectiveAt, setEffectiveAt] = useState<string>(todayShamsiString());
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // فاز D (error-placement + focus-management): خطای درون‌خطی نزدیک فیلد
+  const [fieldErrors, setFieldErrors] = useState<{ cp?: string; amount?: string }>({});
+  const cpTriggerRef = useRef<HTMLButtonElement>(null);
+  const amountInputRef = useRef<HTMLInputElement>(null);
 
   // طرف‌حساب‌های قابل استفاده: مشترکِ مجاز (گرنت/ادمین) + شخصی خودم
   const { sharedCps, privateCps } = useMemo(() => {
@@ -125,20 +129,31 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
     const cleaned = fromPersianDigits(v).replace(/[^\d]/g, "");
     if (cleaned === "") {
       setAmountRaw("");
+      setFieldErrors((f) => (f.amount ? { ...f, amount: undefined } : f));
       return;
     }
     setAmountRaw(toPersianDigits(parseInt(cleaned, 10).toLocaleString("en-US")));
+    setFieldErrors((f) => (f.amount ? { ...f, amount: undefined } : f));
+  }
+
+  function handleCounterpartyChange(id: string) {
+    setCounterpartyId(id);
+    setFieldErrors((f) => (f.cp ? { ...f, cp: undefined } : f));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!currentUserId) return;
-    if (!counterpartyId) {
-      toast({ title: "خطا", description: "طرف حساب را انتخاب کنید.", variant: "destructive" });
-      return;
-    }
-    if (!Number.isFinite(amountNum) || amountNum <= 0) {
-      toast({ title: "خطا", description: "مبلغ نامعتبر است.", variant: "destructive" });
+    // فاز D: اعتبارسنجی درون‌خطی — خطا زیر فیلد + فوکوس اولین فیلد نامعتبر
+    const errs: { cp?: string; amount?: string } = {};
+    if (!counterpartyId)
+      errs.cp = "انتخاب طرف حساب الزامی است — از فهرست بالا یکی را برگزینید.";
+    if (!Number.isFinite(amountNum) || amountNum <= 0)
+      errs.amount = "مبلغ را با ارقام وارد کنید — باید بزرگ‌تر از صفر باشد.";
+    setFieldErrors(errs);
+    if (errs.cp || errs.amount) {
+      if (errs.cp) cpTriggerRef.current?.focus();
+      else if (errs.amount) amountInputRef.current?.focus();
       return;
     }
     if (!effectiveAt) {
@@ -179,12 +194,15 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
-          <Plus className="h-5 w-5 text-primary" />
+      {/* ┌ هدر ثابت — همیشه دیده می‌شود ┐ */}
+      <DialogHeader className="shrink-0 items-start gap-1.5 border-b bg-gradient-to-l from-emerald-50/80 via-emerald-50/30 to-transparent p-4 pb-3 pr-12 text-right sm:p-6 sm:pb-4 sm:pr-14 dark:from-emerald-950/20 dark:via-emerald-950/5">
+        <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Plus className="h-4 w-4" />
+          </span>
           ثبت تراکنش جدید
         </DialogTitle>
-        <DialogDescription>
+        <DialogDescription className="text-[11px] leading-5 sm:text-xs sm:leading-6">
           رکورد در دفتر مستقل خودتان ثبت می‌شود — نیازی به ثبت متقابل طرف
           مقابل نیست. اگر طرف حساب به کاربری لینک باشد، او رکورد شما را در
           بخش «وضعیت تراکنش‌های من در حساب دیگران» می‌بیند و می‌تواند کامنت
@@ -192,12 +210,17 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
         </DialogDescription>
       </DialogHeader>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form
+        onSubmit={handleSubmit}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        {/* ┌ بدنه اسکرول‌شو ┐ */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
         {/* نوع عملیات — شش گزینه */}
         <div className="space-y-2">
           <Label>نوع عملیات</Label>
           <Select value={kind} onValueChange={(v) => setKind(v as TxnKind)}>
-            <SelectTrigger className="h-10">
+            <SelectTrigger className="h-11">
               <SelectValue placeholder="یک نوع عملیات انتخاب کنید" />
             </SelectTrigger>
             <SelectContent>
@@ -242,8 +265,13 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
         {/* طرف حساب */}
         <div className="space-y-2">
           <Label>طرف حساب</Label>
-          <Select value={counterpartyId} onValueChange={setCounterpartyId}>
-            <SelectTrigger className="h-10">
+          <Select value={counterpartyId} onValueChange={handleCounterpartyChange}>
+            <SelectTrigger
+              ref={cpTriggerRef}
+              aria-invalid={!!fieldErrors.cp}
+              aria-describedby={fieldErrors.cp ? "cp-error" : undefined}
+              className="h-11"
+            >
               <SelectValue
                 placeholder={
                   sharedCps.length + privateCps.length === 0
@@ -292,6 +320,11 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
               )}
             </SelectContent>
           </Select>
+          {fieldErrors.cp && (
+            <p id="cp-error" role="alert" className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
+              {fieldErrors.cp}
+            </p>
+          )}
           {selectedCp?.linkedUserId && (
             <div className="flex items-start gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 rounded-md p-2 leading-relaxed">
               <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -316,7 +349,7 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
         <div className="space-y-2">
           <Label>دسته‌بندی (اختیاری)</Label>
           <Select value={categoryId} onValueChange={setCategoryId}>
-            <SelectTrigger className="h-10">
+            <SelectTrigger className="h-11">
               <SelectValue placeholder="بدون دسته" />
             </SelectTrigger>
             <SelectContent>
@@ -335,28 +368,32 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* مبلغ و واحد */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="amount">مبلغ (تومان)</Label>
+        {/* مبلغ — واحد داخل فیلد (فاز ۴: بدون ردیف اضافی «واحد») */}
+        <div className="space-y-2">
+          <Label htmlFor="amount">مبلغ</Label>
+          <div className="relative">
             <Input
               id="amount"
+              ref={amountInputRef}
               dir="ltr"
-              className="h-10 text-right font-medium text-lg"
+              aria-invalid={!!fieldErrors.amount}
+              aria-describedby={fieldErrors.amount ? "amount-error" : undefined}
+              className="h-11 pl-16 text-right text-lg font-semibold tracking-wide"
               placeholder="۰"
               value={amountRaw}
               onChange={(e) => handleAmountChange(e.target.value)}
               inputMode="numeric"
               disabled={submitting}
-              required
             />
-          </div>
-          <div className="space-y-2">
-            <Label>واحد</Label>
-            <div className="h-10 flex items-center justify-center rounded-md border bg-muted/30 text-sm font-medium">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-medium text-muted-foreground">
               تومان
-            </div>
+            </span>
           </div>
+          {fieldErrors.amount && (
+            <p id="amount-error" role="alert" className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
+              {fieldErrors.amount}
+            </p>
+          )}
         </div>
 
         {/* تاریخ مؤثر */}
@@ -408,12 +445,14 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
             disabled={submitting}
           />
         </div>
+        </div>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row">
+        {/* ┌ فوتر ثابت — دکمه ثبت همیشه در دسترس است ┐ */}
+        <DialogFooter className="shrink-0 flex-col gap-2 border-t bg-card/70 p-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:flex-row sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
           <Button
             type="button"
             variant="outline"
-            className="w-full sm:w-auto"
+            className="h-11 w-full sm:w-auto"
             onClick={onClose}
             disabled={submitting}
           >
@@ -421,8 +460,8 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
           </Button>
           <Button
             type="submit"
-            className="w-full sm:w-auto"
-            disabled={submitting || !counterpartyId || !amountRaw}
+            className="h-11 w-full text-base font-semibold shadow-sm sm:w-auto sm:text-sm"
+            disabled={submitting}
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 ml-2 animate-spin" />

@@ -120,6 +120,40 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "ss01" on, "ss02" on;
+    /* فاز D (number-tabular): ارقام جدولی — عرض ثابت ارقام در مبالغ، بدون لرزش */
+    font-variant-numeric: tabular-nums;
+  }
+  /* فاز D (cursor-pointer): Tailwind v4 نشانگر pointer را از پیش‌فرض حذف کرده */
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  [role="option"]:not(:disabled),
+  [role="tab"]:not(:disabled),
+  [role="menuitem"],
+  summary,
+  a[href],
+  label:has(> input:not(:disabled)) {
+    cursor: pointer;
+  }
+  /* فاز D (tap-delay): حذف تاخیر ۳۰۰ms لمس در مرورگرهای قدیمی */
+  button,
+  a[href],
+  [role="button"],
+  input,
+  select,
+  textarea,
+  summary {
+    touch-action: manipulation;
+  }
+  /* فاز D (reduced-motion): احترام به تنظیم «کاهش حرکت» سیستم‌عامل */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 

@@ -969,6 +969,10 @@ function EditCounterpartyDialog({
             <Pencil className="h-5 w-5 text-primary" />
             ویرایش طرف حساب «{cp.displayName}»
           </DialogTitle>
+          <DialogDescription>
+            نام نمایشی، یادداشت و اتصال به کاربر را ویرایش کنید. تغییرات برای
+            همه کاربرانِ این طرف حساب مشترک بلافاصله اعمال می‌شود.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="space-y-2">

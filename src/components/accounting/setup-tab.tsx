@@ -282,7 +282,7 @@ export function SetupTab() {
         <CardContent className="pt-0 space-y-3">
           {/* دانلود کد frontend */}
           <a
-            href="/my-accounting-app-v2.zip?v=14"
+            href="/my-accounting-app-v2.zip?v=17"
             download
             className="flex items-center justify-between gap-3 rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 transition-colors"
           >

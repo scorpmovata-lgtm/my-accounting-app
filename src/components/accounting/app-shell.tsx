@@ -196,7 +196,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-dvh flex flex-col bg-background">
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-40">
         <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-2">
           {/* همبرگر در سمت راست (اول در RTL) */}
