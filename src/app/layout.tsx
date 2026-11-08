@@ -12,15 +12,15 @@ const vazirmatn = Vazirmatn({
 });
 
 export const metadata: Metadata = {
-  title: "دفتر حسابداری — بدهی و طلب",
+  title: "وصـد — دفتر بدهی و طلب",
   description:
     "دفتر شخصی برای ثبت دقیق بدهی و طلب، با تقویم هجری شمسی و موتور حسابداری مطمئن.",
-  keywords: ["حسابداری", "بدهی", "طلب", "دفتر", "تقویم شمسی", "تلگرام"],
-  applicationName: "دفتر حسابداری",
+  keywords: ["حسابداری", "بدهی", "طلب", "دفتر", "تقویم شمسی", "تلگرام", "وصد"],
+  applicationName: "وصـد",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    title: "حسابداری",
+    title: "وصـد",
     statusBarStyle: "default",
   },
   icons: {
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f766e",
+  themeColor: "#059669",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,

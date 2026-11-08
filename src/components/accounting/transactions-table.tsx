@@ -127,19 +127,19 @@ export function TransactionsTable() {
 
   return (
     <div className="space-y-4">
-      {/* فیلترها */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-        <div className="relative sm:col-span-2 lg:col-span-1">
-          <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      {/* فیلترها — کارت شیشه‌ای */}
+      <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-card p-3 shadow-soft sm:gap-2.5 lg:grid-cols-4">
+        <div className="relative col-span-2 lg:col-span-1">
+          <Search className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="جستجو..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pr-8 h-9"
+            className="h-10 rounded-xl pr-8"
           />
         </div>
         <Select value={cpFilter} onValueChange={setCpFilter}>
-          <SelectTrigger className="h-9">
+          <SelectTrigger className="h-10 rounded-xl">
             <SelectValue placeholder="طرف حساب" />
           </SelectTrigger>
           <SelectContent>
@@ -152,7 +152,7 @@ export function TransactionsTable() {
           </SelectContent>
         </Select>
         <Select value={kindFilter} onValueChange={setKindFilter}>
-          <SelectTrigger className="h-9">
+          <SelectTrigger className="h-10 rounded-xl">
             <SelectValue placeholder="نوع عملیات" />
           </SelectTrigger>
           <SelectContent>
@@ -165,7 +165,7 @@ export function TransactionsTable() {
           </SelectContent>
         </Select>
         <Select value={catFilter} onValueChange={setCatFilter}>
-          <SelectTrigger className="h-9">
+          <SelectTrigger className="h-10 rounded-xl">
             <SelectValue placeholder="دسته‌بندی" />
           </SelectTrigger>
           <SelectContent>
@@ -180,7 +180,8 @@ export function TransactionsTable() {
       </div>
 
       {/* شمارش نتایج */}
-      <div className="text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
         {toPersianDigits(filtered.length.toString())} رکورد از{" "}
         {toPersianDigits(myTxns.length.toString())} تراکنش
       </div>
@@ -233,7 +234,7 @@ function TxnCard({ txn }: { txn: Transaction }) {
 
   return (
     <Card
-      className={`overflow-hidden transition-colors ${
+      className={`overflow-hidden rounded-2xl border-border/80 shadow-soft transition-all duration-300 hover:shadow-lift ${
         opening
           ? "border-amber-300/60 dark:border-amber-800/60"
           : ""

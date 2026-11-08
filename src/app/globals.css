@@ -36,81 +36,102 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-:root {
-  --radius: 0.625rem;
-  --background: oklch(0.99 0.002 95);
-  --foreground: oklch(0.18 0.01 95);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.01 95);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.01 95);
-  /* Emerald/teal primary (no indigo/blue per design rules) */
-  --primary: oklch(0.55 0.13 165);
-  --primary-foreground: oklch(0.99 0 0);
-  --secondary: oklch(0.96 0.005 95);
-  --secondary-foreground: oklch(0.2 0.01 95);
-  --muted: oklch(0.96 0.005 95);
-  --muted-foreground: oklch(0.5 0.01 95);
-  --accent: oklch(0.94 0.02 165);
-  --accent-foreground: oklch(0.2 0.01 95);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.9 0.005 95);
-  --input: oklch(0.9 0.005 95);
-  --ring: oklch(0.55 0.13 165);
-  /* Receivable = emerald, Payable = rose, neutral/amber for adjustments */
-  --chart-1: oklch(0.65 0.15 165);
-  --chart-2: oklch(0.6 0.2 20);
-  --chart-3: oklch(0.7 0.15 80);
-  --chart-4: oklch(0.55 0.13 220);
-  --chart-5: oklch(0.7 0.12 320);
-  --sidebar: oklch(0.985 0.002 95);
-  --sidebar-foreground: oklch(0.18 0.01 95);
-  --sidebar-primary: oklch(0.55 0.13 165);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.94 0.02 165);
-  --sidebar-accent-foreground: oklch(0.2 0.01 95);
-  --sidebar-border: oklch(0.9 0.005 95);
-  --sidebar-ring: oklch(0.55 0.13 165);
+/* توکن‌های سایه نرم — سبک Fintech Premium (کارت‌های شناور ملایم) */
+@theme {
+  --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 30px -14px rgb(15 23 42 / 0.10);
+  --shadow-lift: 0 2px 6px rgb(15 23 42 / 0.05), 0 18px 44px -18px rgb(5 150 105 / 0.22);
+  --shadow-fab: 0 4px 14px rgb(5 150 105 / 0.40), 0 2px 6px rgb(15 23 42 / 0.12);
 }
 
+/* ---------------------------------------------------------------------------
+   پالت روشن — Premium Fintech (وصـد)
+   Background #F8FAFC · Surface #FFFFFF · Text #0F172A / #64748B · Border #E2E8F0
+   Primary #059669 · Primary Dark #047857 · Mint #D1FAE5
+--------------------------------------------------------------------------- */
+:root {
+  --radius: 0.75rem;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  /* سبز زمردی — Primary */
+  --primary: #059669;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #d1fae5;
+  --accent-foreground: #064e3b;
+  --destructive: #e11d48;
+  --success: #059669;
+  --warning: #f59e0b;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #059669;
+  /* پالت نمودارها: درآمد/طلب سبز، هزینه/بدهی قرمز ملایم، هشدار نارنجی ملایم */
+  --chart-1: #10b981;
+  --chart-2: #f43f5e;
+  --chart-3: #f59e0b;
+  --chart-4: #14b8a6;
+  --chart-5: #8b5cf6;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #059669;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #d1fae5;
+  --sidebar-accent-foreground: #064e3b;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #059669;
+}
+
+/* ---------------------------------------------------------------------------
+   پالت تاریک — پس‌زمینه سرمه‌ای عمیق با اکسنت زمردی
+--------------------------------------------------------------------------- */
 .dark {
-  --background: oklch(0.16 0.005 95);
-  --foreground: oklch(0.97 0.005 95);
-  --card: oklch(0.2 0.005 95);
-  --card-foreground: oklch(0.97 0.005 95);
-  --popover: oklch(0.2 0.005 95);
-  --popover-foreground: oklch(0.97 0.005 95);
-  --primary: oklch(0.7 0.13 165);
-  --primary-foreground: oklch(0.16 0.005 95);
-  --secondary: oklch(0.26 0.005 95);
-  --secondary-foreground: oklch(0.97 0.005 95);
-  --muted: oklch(0.26 0.005 95);
-  --muted-foreground: oklch(0.7 0.01 95);
-  --accent: oklch(0.3 0.02 165);
-  --accent-foreground: oklch(0.97 0.005 95);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.7 0.13 165);
-  --chart-1: oklch(0.65 0.15 165);
-  --chart-2: oklch(0.6 0.2 20);
-  --chart-3: oklch(0.7 0.15 80);
-  --chart-4: oklch(0.55 0.13 220);
-  --chart-5: oklch(0.7 0.12 320);
-  --sidebar: oklch(0.2 0.005 95);
-  --sidebar-foreground: oklch(0.97 0.005 95);
-  --sidebar-primary: oklch(0.7 0.13 165);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.3 0.02 165);
-  --sidebar-accent-foreground: oklch(0.97 0.005 95);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.7 0.13 165);
+  --background: #0b1220;
+  --foreground: #f1f5f9;
+  --card: #101a2e;
+  --card-foreground: #f1f5f9;
+  --popover: #101a2e;
+  --popover-foreground: #f1f5f9;
+  --primary: #10b981;
+  --primary-foreground: #04291d;
+  --secondary: #18243c;
+  --secondary-foreground: #f1f5f9;
+  --muted: #18243c;
+  --muted-foreground: #94a3b8;
+  --accent: #0d3b2e;
+  --accent-foreground: #a7f3d0;
+  --destructive: #fb7185;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 12%);
+  --ring: #10b981;
+  --chart-1: #34d399;
+  --chart-2: #fb7185;
+  --chart-3: #fbbf24;
+  --chart-4: #2dd4bf;
+  --chart-5: #a78bfa;
+  --sidebar: #101a2e;
+  --sidebar-foreground: #f1f5f9;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #04291d;
+  --sidebar-accent: #0d3b2e;
+  --sidebar-accent-foreground: #a7f3d0;
+  --sidebar-border: rgb(255 255 255 / 8%);
+  --sidebar-ring: #10b981;
 }
 
 @layer base {
@@ -120,10 +141,10 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "ss01" on, "ss02" on;
-    /* فاز D (number-tabular): ارقام جدولی — عرض ثابت ارقام در مبالغ، بدون لرزش */
+    /* ارقام جدولی — عرض ثابت ارقام در مبالغ، بدون لرزش */
     font-variant-numeric: tabular-nums;
   }
-  /* فاز D (cursor-pointer): Tailwind v4 نشانگر pointer را از پیش‌فرض حذف کرده */
+  /* Tailwind v4 نشانگر pointer را از پیش‌فرض حذف کرده */
   button:not(:disabled),
   [role="button"]:not(:disabled),
   [role="option"]:not(:disabled),
@@ -134,7 +155,7 @@
   label:has(> input:not(:disabled)) {
     cursor: pointer;
   }
-  /* فاز D (tap-delay): حذف تاخیر ۳۰۰ms لمس در مرورگرهای قدیمی */
+  /* حذف تاخیر ۳۰۰ms لمس در مرورگرهای قدیمی */
   button,
   a[href],
   [role="button"],
@@ -144,7 +165,7 @@
   summary {
     touch-action: manipulation;
   }
-  /* فاز D (reduced-motion): احترام به تنظیم «کاهش حرکت» سیستم‌عامل */
+  /* احترام به تنظیم «کاهش حرکت» سیستم‌عامل */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -167,22 +188,37 @@
     background: transparent;
   }
   .scrollbar-persian::-webkit-scrollbar-thumb {
-    background: oklch(0.85 0 0);
-    border-radius: 4px;
+    background: #cbd5e1;
+    border-radius: 999px;
   }
   .scrollbar-persian::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.7 0 0);
+    background: #94a3b8;
   }
   .dark .scrollbar-persian::-webkit-scrollbar-thumb {
-    background: oklch(0.4 0 0);
+    background: rgb(255 255 255 / 16%);
   }
   .dark .scrollbar-persian::-webkit-scrollbar-thumb:hover {
-    background: oklch(0.5 0 0);
+    background: rgb(255 255 255 / 28%);
   }
 
   /* Force Persian digits in numeric displays */
   .persian-nums {
     font-feature-settings: "ss01" on;
+  }
+
+  /* شیشه‌ای ظریف — برای هدر، منوی پایین و کارت‌های روی گرادیان */
+  .glass {
+    background: rgb(255 255 255 / 72%);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  }
+  .dark .glass {
+    background: rgb(16 26 46 / 72%);
+  }
+
+  /* متن روی گرادیان سبز (کارت قهرمان) */
+  .on-gradient-muted {
+    color: rgb(255 255 255 / 72%);
   }
 }
 

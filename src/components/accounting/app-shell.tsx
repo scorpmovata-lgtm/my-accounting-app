@@ -1,5 +1,11 @@
 "use client";
 
+// App Shell «وصـد» — قاب Premium SaaS
+// ---------------------------------------------------------------
+// دسکتاپ (lg+): سایدبار ثابت راست‌چین (قابل جمع‌شدن) + نوار بالا شیشه‌ای
+// موبایل: نوار بالای فشرده + منوی پایین با دکمه شناور «ثبت تراکنش»
+// منطق تب‌ها، نقش‌ها و دسترسی‌ها بدون تغییر حفظ شده است.
+
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import {
@@ -18,6 +24,10 @@ import {
   Rocket,
   Loader2,
   Send,
+  Plus,
+  PanelRightClose,
+  PanelRightOpen,
+  Home,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,6 +42,7 @@ import { useAccountingStore } from "@/store/accounting-store";
 import { toPersianDigits } from "@/lib/accounting/jalali";
 import { APP_VERSION } from "@/lib/version";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { LoginScreen } from "./login-screen";
 import { DashboardPanel } from "./dashboard-panel";
 import { TransactionsTable } from "./transactions-table";
@@ -58,22 +69,14 @@ interface NavItem {
 }
 
 const ALL_NAV_ITEMS: NavItem[] = [
-  {
-    value: "dashboard",
-    label: "داشبورد",
-    icon: LayoutDashboard,
-  },
+  { value: "dashboard", label: "داشبورد", icon: LayoutDashboard },
   {
     value: "transactions",
     label: "تراکنش‌ها",
     icon: Receipt,
     hiddenForBalanceOnly: true,
   },
-  {
-    value: "telegram",
-    label: "تلگرام",
-    icon: Send,
-  },
+  { value: "telegram", label: "تلگرام", icon: Send },
   {
     value: "personal",
     label: "تنظیمات من",
@@ -94,6 +97,15 @@ const ALL_NAV_ITEMS: NavItem[] = [
   },
 ];
 
+const TAB_TITLES: Record<TabValue, string> = {
+  dashboard: "داشبورد",
+  transactions: "تراکنش‌ها",
+  telegram: "تلگرام",
+  personal: "تنظیمات من",
+  admin: "مدیریت سامانه",
+  setup: "راه‌اندازی",
+};
+
 export function AppShell() {
   const authStatus = useAccountingStore((s) => s.authStatus);
   const currentUserId = useAccountingStore((s) => s.currentUserId);
@@ -107,6 +119,7 @@ export function AppShell() {
   const [tab, setTab] = useState<string>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [txDialogOpen, setTxDialogOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
 
   // بازیابی نشست ذخیره‌شده هنگام mount (فقط حالت واقعی)
   useEffect(() => {
@@ -174,7 +187,14 @@ export function AppShell() {
         <div className="space-y-4">
           {!isBalanceOnly && (
             <div className="flex justify-end">
-              <TransactionFormDialog />
+              <TransactionFormDialog
+                trigger={
+                  <Button className="rounded-xl shadow-fab">
+                    <Plus className="h-4 w-4" />
+                    ثبت تراکنش جدید
+                  </Button>
+                }
+              />
             </div>
           )}
           <TransactionsTable />
@@ -195,194 +215,419 @@ export function AppShell() {
       break;
   }
 
+  // ------------------------- آیتم منو (مشترک) -------------------------
+  function NavButton({
+    item,
+    compact = false,
+  }: {
+    item: NavItem;
+    compact?: boolean;
+  }) {
+    const Icon = item.icon;
+    const isActive = finalTab === item.value;
+    return (
+      <button
+        type="button"
+        onClick={() => selectTab(item.value)}
+        title={compact ? item.label : undefined}
+        className={cn(
+          "group relative flex w-full items-center rounded-xl text-sm transition-all duration-200",
+          compact ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2.5",
+          isActive
+            ? "bg-accent font-semibold text-accent-foreground"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+        )}
+        aria-current={isActive ? "page" : undefined}
+      >
+        {/* نشانگر فعال لبه راست (RTL) */}
+        {isActive && (
+          <span
+            className="absolute right-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-primary"
+            aria-hidden
+          />
+        )}
+        <Icon
+          className={cn(
+            "h-[18px] w-[18px] shrink-0",
+            isActive && "text-primary"
+          )}
+        />
+        {!compact && <span className="flex-1 text-right">{item.label}</span>}
+        {!compact && item.adminOnly && (
+          <Badge
+            variant="outline"
+            className="h-4 gap-0.5 px-1.5 text-[10px]"
+          >
+            <ShieldCheck className="h-2.5 w-2.5" />
+            ادمین
+          </Badge>
+        )}
+      </button>
+    );
+  }
+
+  // ------------------------- کارت کاربر (مشترک) -------------------------
+  const userCard = (
+    <div className="rounded-xl border bg-muted/40 p-2.5 text-xs space-y-1">
+      <div className="flex items-center gap-2 font-medium">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+          {currentUser.displayName.trim().charAt(0) || "؟"}
+        </span>
+        <span className="truncate">{currentUser.displayName}</span>
+        {isAdmin ? (
+          <Badge variant="secondary" className="mr-auto h-4 px-1.5 text-[10px]">
+            ادمین
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="mr-auto h-4 px-1.5 text-[10px]">
+            {isBalanceOnly ? "فقط مانده" : "تراکنش‌ها"}
+          </Badge>
+        )}
+      </div>
+      <div className="text-muted-foreground truncate font-mono ps-9" dir="ltr">
+        {currentUser.username}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-dvh flex flex-col bg-background">
-      <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-40">
-        <div className="mx-auto max-w-6xl px-4 h-14 flex items-center gap-2">
-          {/* همبرگر در سمت راست (اول در RTL) */}
-          <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-            <SheetTrigger asChild>
+    <div className="flex min-h-dvh bg-background">
+      {/* ═══════════ سایدبار دسکتاپ (راست در RTL) ═══════════ */}
+      <aside
+        className={cn(
+          "sticky top-0 hidden h-dvh shrink-0 flex-col border-l bg-card transition-[width] duration-300 lg:flex",
+          collapsed ? "w-[76px]" : "w-64"
+        )}
+        aria-label="منوی اصلی"
+      >
+        {/* لوگو */}
+        <div
+          className={cn(
+            "flex h-16 items-center gap-2.5 border-b px-4",
+            collapsed && "justify-center px-0"
+          )}
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white shadow-fab">
+            <BookOpenText className="h-5 w-5" />
+          </span>
+          {!collapsed && (
+            <div className="flex min-w-0 flex-col">
+              <span className="text-lg font-extrabold leading-6">وصـد</span>
+              <span className="text-[10px] text-muted-foreground">
+                دفتر بدهی و طلب
+              </span>
+            </div>
+          )}
+          {!collapsed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="mr-auto h-8 w-8 text-muted-foreground"
+              onClick={() => setCollapsed(true)}
+              aria-label="جمع‌کردن منو"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        {collapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="mx-auto mt-2 h-8 w-8 text-muted-foreground"
+            onClick={() => setCollapsed(false)}
+            aria-label="بازکردن منو"
+          >
+            <PanelRightOpen className="h-4 w-4" />
+          </Button>
+        )}
+
+        {/* آیتم‌های منو */}
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3 scrollbar-persian">
+          {visibleNavItems.map((item) => (
+            <NavButton key={item.value} item={item} compact={collapsed} />
+          ))}
+        </nav>
+
+        {/* پایین سایدبار: کاربر + تم + خروج */}
+        <div className="space-y-2 border-t p-3">
+          {!collapsed && userCard}
+          <div className={cn("flex items-center gap-2", collapsed && "flex-col")}>
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                "relative justify-center",
+                collapsed ? "h-9 w-9 p-0" : "flex-1"
+              )}
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label="تغییر تم"
+            >
+              <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+              <Moon className="absolute h-4 w-4 -rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+              {!collapsed && (theme === "dark" ? "روشن" : "تاریک")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              aria-label="خروج"
+              className={cn(
+                "text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/30",
+                collapsed ? "h-9 w-9 p-0" : "flex-1"
+              )}
+            >
+              <LogOut className="h-4 w-4" />
+              {!collapsed && "خروج"}
+            </Button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ═══════════ ستون اصلی ═══════════ */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* نوار بالا */}
+        <header className="glass sticky top-0 z-40 border-b">
+          <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-4 sm:px-6">
+            {/* همبرگر موبایل — سمت راست (اول در RTL) */}
+            <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 shrink-0 lg:hidden"
+                  aria-label="باز کردن منو"
+                >
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-72 p-0 flex flex-col">
+                <SheetHeader className="border-b p-4">
+                  <SheetTitle className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white shadow-fab">
+                      <BookOpenText className="h-5 w-5" />
+                    </span>
+                    <span className="text-lg font-extrabold">وصـد</span>
+                  </SheetTitle>
+                </SheetHeader>
+
+                <nav className="flex-1 space-y-1 overflow-y-auto p-3 scrollbar-persian">
+                  {visibleNavItems.map((item) => (
+                    <NavButton key={item.value} item={item} />
+                  ))}
+                </nav>
+
+                {/* بخش پایین: کاربر + تم + خروج */}
+                <div className="mt-auto space-y-2 border-t p-3">
+                  {userCard}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="relative flex-1 justify-center"
+                      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                      aria-label="تغییر تم"
+                    >
+                      <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                      <Moon className="absolute h-4 w-4 -rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                      {theme === "dark" ? "روشن" : "تاریک"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleLogout}
+                      aria-label="خروج"
+                      className="text-rose-600 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/30"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      خروج
+                    </Button>
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
+
+            {/* لوگو موبایل */}
+            <div className="flex items-center gap-2 lg:hidden">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white">
+                <BookOpenText className="h-4 w-4" />
+              </span>
+              <span className="text-base font-extrabold">وصـد</span>
+            </div>
+
+            {/* عنوان صفحه + تاریخ — دسکتاپ */}
+            <div className="hidden min-w-0 items-center gap-3 lg:flex">
+              <h1 className="truncate text-base font-bold">{TAB_TITLES[finalTab]}</h1>
+              <span className="h-4 w-px bg-border" aria-hidden />
+              <span className="truncate text-xs text-muted-foreground">
+                {currentUser.displayName}
+              </span>
+            </div>
+
+            <div className="mr-auto flex items-center gap-1.5">
+              {/* حالت واقعی/نمایشی */}
+              {!realMode && (
+                <Badge variant="outline" className="hidden h-5 px-2 text-[10px] sm:inline-flex">
+                  حالت نمایشی
+                </Badge>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-10 w-10 shrink-0"
-                aria-label="باز کردن منو"
+                className="relative h-9 w-9 lg:hidden"
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                aria-label="تغییر تم"
               >
-                <Menu className="h-5 w-5" />
+                <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                <Moon className="absolute h-4 w-4 -rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
               </Button>
-            </SheetTrigger>
-            <SheetContent side="right" className="w-72 p-0 flex flex-col">
-              <SheetHeader className="p-4 border-b">
-                <SheetTitle className="flex items-center gap-2">
-                  <BookOpenText className="h-5 w-5 text-primary" />
-                  منوی اصلی
-                </SheetTitle>
-              </SheetHeader>
-
-              <nav className="flex-1 overflow-y-auto scrollbar-persian p-2 space-y-1">
-                {visibleNavItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = finalTab === item.value;
-                  return (
-                    <button
-                      key={item.value}
-                      type="button"
-                      onClick={() => selectTab(item.value)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm transition-colors text-right ${
-                        isActive
-                          ? "bg-primary text-primary-foreground font-medium"
-                          : "hover:bg-muted text-foreground"
-                      }`}
-                    >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span className="flex-1 text-right">{item.label}</span>
-                      {item.adminOnly && !isActive && (
-                        <Badge
-                          variant="outline"
-                          className="h-4 px-1.5 text-[10px] gap-0.5"
-                        >
-                          <ShieldCheck className="h-2.5 w-2.5" />
-                          ادمین
-                        </Badge>
-                      )}
-                    </button>
-                  );
-                })}
-              </nav>
-
-              {/* بخش پایین: کاربر + تم + خروج */}
-              <div className="border-t p-3 space-y-2 mt-auto">
-                <div className="rounded-md bg-muted/50 p-2.5 text-xs space-y-1">
-                  <div className="flex items-center gap-2 font-medium">
-                    <UserIcon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{currentUser.displayName}</span>
-                    {isAdmin ? (
-                      <Badge variant="secondary" className="h-4 px-1.5 text-[10px] mr-auto">
-                        ادمین
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="h-4 px-1.5 text-[10px] mr-auto">
-                        {isBalanceOnly ? "فقط مانده" : "تراکنش‌ها"}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-muted-foreground truncate font-mono" dir="ltr">
-                    {currentUser.username}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 justify-center"
-                    onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                    aria-label="تغییر تم"
-                  >
-                    <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0 ml-1" />
-                    <Moon className="h-4 w-4 -rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100 ml-1" />
-                    {theme === "dark" ? "روشن" : "تاریک"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleLogout}
-                    aria-label="خروج"
-                    className="text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
-                  >
-                    <LogOut className="h-4 w-4 ml-1" />
-                    خروج
-                  </Button>
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
-
-          {/* نام اپ + کاربر */}
-          <BookOpenText className="h-6 w-6 text-primary shrink-0" />
-          <div className="flex flex-col min-w-0">
-            <span className="font-bold leading-tight truncate">
-              {currentUser.displayName}
-            </span>
-            <span className="text-xs text-muted-foreground leading-tight truncate">
-              دفتر {currentUser.username}
-              {isAdmin && " — ادمین"}
-            </span>
+              {/* آواتار کاربر موبایل */}
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary lg:hidden">
+                {currentUser.displayName.trim().charAt(0) || "؟"}
+              </span>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <main className="flex-1 mx-auto max-w-6xl w-full px-4 py-4 sm:py-6">
-        {activeContent}
-      </main>
+        {/* محتوای اصلی */}
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-4 sm:px-6 sm:py-6">
+          {activeContent}
+        </main>
 
-      {/* منوی پایین صفحه — sticky (نه fixed): هنگام اسکرول به پایین صفحه می‌چسبد،
-          اما در انتهای صفحه در جای طبیعی خودش (بالای فوتر) می‌نشیند و
-          هرگز فوتر یا آخرین ردیف محتوا را نمی‌پوشاند */}
-      {!isBalanceOnly && (
+        {/* منوی پایین موبایل — sticky (هرگز فوتر را نمی‌پوشاند) */}
         <nav
-          className="sticky bottom-0 z-50 border-t bg-card/95 backdrop-blur-md"
+          className={cn(
+            "glass sticky bottom-0 z-50 border-t lg:hidden",
+            !isBalanceOnly && "pb-0"
+          )}
           style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
           aria-label="منوی دسترسی سریع"
         >
-          <div className="mx-auto max-w-6xl grid grid-cols-3">
-            <button
-              type="button"
-              onClick={() => setTxDialogOpen(true)}
-              className="flex flex-col items-center justify-center gap-1 py-2.5 text-muted-foreground hover:text-primary transition-colors"
-              aria-label="افزودن تراکنش"
-            >
-              <PlusCircle className="h-5 w-5" />
-              <span className="text-[11px] font-medium">افزودن تراکنش</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => selectTab("transactions")}
-              className={`flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
-                finalTab === "transactions"
-                  ? "text-primary"
-                  : "text-muted-foreground hover:text-primary"
-              }`}
-              aria-label="لیست تراکنش‌ها"
-            >
-              <ListIcon className="h-5 w-5" />
-              <span className="text-[11px] font-medium">لیست تراکنش‌ها</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => selectTab("dashboard")}
-              className={`flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
-                finalTab === "dashboard"
-                  ? "text-primary"
-                  : "text-muted-foreground hover:text-primary"
-              }`}
-              aria-label="داشبورد"
-            >
-              <LayoutDashboard className="h-5 w-5" />
-              <span className="text-[11px] font-medium">داشبورد</span>
-            </button>
-          </div>
+          {isBalanceOnly ? (
+            <div className="mx-auto grid max-w-6xl grid-cols-3">
+              <MobileTabButton
+                icon={LayoutDashboard}
+                label="داشبورد"
+                active={finalTab === "dashboard"}
+                onClick={() => selectTab("dashboard")}
+              />
+              <MobileTabButton
+                icon={Send}
+                label="تلگرام"
+                active={finalTab === "telegram"}
+                onClick={() => selectTab("telegram")}
+              />
+              <MobileTabButton
+                icon={Settings}
+                label="تنظیمات"
+                active={finalTab === "personal"}
+                onClick={() => selectTab("personal")}
+              />
+            </div>
+          ) : (
+            <div className="mx-auto grid max-w-6xl grid-cols-5 items-end">
+              <MobileTabButton
+                icon={Home}
+                label="داشبورد"
+                active={finalTab === "dashboard"}
+                onClick={() => selectTab("dashboard")}
+              />
+              <MobileTabButton
+                icon={ListIcon}
+                label="تراکنش‌ها"
+                active={finalTab === "transactions"}
+                onClick={() => selectTab("transactions")}
+              />
+              {/* دکمه شناور ثبت تراکنش */}
+              <div className="relative flex justify-center" style={{ height: 56 }}>
+                <button
+                  type="button"
+                  onClick={() => setTxDialogOpen(true)}
+                  className="absolute -top-5 flex h-14 w-14 items-center justify-center rounded-full border-4 border-background bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white shadow-fab transition-transform active:scale-95"
+                  aria-label="افزودن تراکنش جدید"
+                >
+                  <PlusCircle className="h-6 w-6" />
+                </button>
+              </div>
+              <MobileTabButton
+                icon={Send}
+                label="تلگرام"
+                active={finalTab === "telegram"}
+                onClick={() => selectTab("telegram")}
+              />
+              <MobileTabButton
+                icon={Settings}
+                label="تنظیمات"
+                active={finalTab === "personal"}
+                onClick={() => selectTab("personal")}
+              />
+            </div>
+          )}
         </nav>
-      )}
 
-      {/* دیالوگ افزودن تراکنش */}
-      {!isBalanceOnly && (
-        <TransactionFormDialog open={txDialogOpen} onOpenChange={setTxDialogOpen} />
-      )}
+        {/* دیالوگ افزودن تراکنش */}
+        {!isBalanceOnly && (
+          <TransactionFormDialog open={txDialogOpen} onOpenChange={setTxDialogOpen} />
+        )}
 
-      <footer className="border-t bg-card/80 backdrop-blur-sm mt-auto">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <div>
-            دفتر حسابداری — نسخه {toPersianDigits(APP_VERSION)} (دفتر مستقل + دید دوجانبه)
+        {/* فوتر — با mt-auto همیشه کف صفحه، بدون پوشاندن محتوا */}
+        <footer className="mt-auto border-t bg-card/80 backdrop-blur-sm">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs text-muted-foreground sm:px-6">
+            <div className="flex items-center gap-1.5">
+              <BookOpenText className="h-3.5 w-3.5 text-primary" />
+              <span>
+                وصـد — نسخه {toPersianDigits(APP_VERSION)} (دفتر مستقل + دید
+                دوجانبه)
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>کامنت‌های دوطرفه</span>
+              <span aria-hidden>•</span>
+              <span>دسته‌بندی شخصی</span>
+              <span aria-hidden>•</span>
+              <span>تقویم شمسی</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span>کامنت‌های دوطرفه روی تراکنش‌ها</span>
-            <span aria-hidden>•</span>
-            <span>دسته‌بندی شخصی</span>
-            <span aria-hidden>•</span>
-            <span>تقویم شمسی</span>
-          </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// دکمه منوی پایین موبایل
+// ---------------------------------------------------------------------------
+
+function MobileTabButton({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex flex-col items-center justify-center gap-1 py-2.5 transition-colors",
+        active ? "text-primary" : "text-muted-foreground hover:text-primary"
+      )}
+      aria-current={active ? "page" : undefined}
+    >
+      <Icon className={cn("h-5 w-5", active && "drop-shadow-sm")} />
+      <span className={cn("text-[10px]", active && "font-bold")}>{label}</span>
+      <span
+        className={cn(
+          "h-1 w-1 rounded-full transition-colors",
+          active ? "bg-primary" : "bg-transparent"
+        )}
+        aria-hidden
+      />
+    </button>
   );
 }

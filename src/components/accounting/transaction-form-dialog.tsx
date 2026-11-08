@@ -1,7 +1,28 @@
 "use client";
 
+// فرم ثبت تراکنش — بازطراحی Premium
+// ---------------------------------------------------------------
+// موبایل: Bottom Sheet (vaul) با فوتر چسبان — دکمه «ثبت تراکنش»
+//   همیشه در دید است (رفع باگ ناپدیدشدن دکمه در موبایل).
+// دسکتاپ: مودال مرکزی با فوتر ثابت.
+// انتخاب نوع عملیات: کارت‌های بصری دوستونی به‌جای دراپ‌داون متنی.
+// منطق اعتبارسنجی و ثبت بدون تغییر حفظ شده است.
+
 import { useMemo, useRef, useState } from "react";
-import { Plus, Loader2, Link2, Info, CheckCircle2, Lock, History } from "lucide-react";
+import {
+  Plus,
+  Loader2,
+  Link2,
+  Info,
+  CheckCircle2,
+  Lock,
+  History,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Banknote,
+  HandCoins,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +37,15 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "@/components/ui/drawer";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -25,11 +55,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useAccountingStore } from "@/store/accounting-store";
 import { useToast } from "@/hooks/use-toast";
 import { JalaliDatePicker } from "./jalali-date-picker";
 import {
-  ALL_KINDS,
   KIND_META,
   type Currency,
   type TxnKind,
@@ -41,6 +71,7 @@ import {
   todayShamsiString,
   formatShamsiLong,
 } from "@/lib/accounting/jalali";
+import { cn } from "@/lib/utils";
 
 interface Props {
   open?: boolean;
@@ -50,24 +81,165 @@ interface Props {
 
 const NONE = "__none__";
 
+// ---------------------------------------------------------------------------
+// کارت‌های انتخاب نوع عملیات
+// ---------------------------------------------------------------------------
+
+type Tone = "emerald" | "rose" | "amber";
+
+const TONE_CHIP: Record<Tone, string> = {
+  emerald:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400",
+  rose: "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-400",
+  amber:
+    "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400",
+};
+
+const CURRENT_KINDS: {
+  kind: TxnKind;
+  icon: LucideIcon;
+  tone: Tone;
+  short: string;
+}[] = [
+  {
+    kind: "claim",
+    icon: ArrowDownLeft,
+    tone: "emerald",
+    short: "طرف حساب به من بدهکار شد",
+  },
+  {
+    kind: "paid_to",
+    icon: Banknote,
+    tone: "emerald",
+    short: "پول پرداخت کردم",
+  },
+  {
+    kind: "debt",
+    icon: ArrowUpRight,
+    tone: "rose",
+    short: "من بدهکار شدم",
+  },
+  {
+    kind: "received_from",
+    icon: HandCoins,
+    tone: "rose",
+    short: "پول دریافت کردم",
+  },
+];
+
+const OPENING_KINDS: { kind: TxnKind; label: string }[] = [
+  { kind: "opening_claim", label: "طلب اولیه" },
+  { kind: "opening_debt", label: "بدهی اولیه" },
+];
+
+function KindCard({
+  selected,
+  onClick,
+  icon: Icon,
+  tone,
+  title,
+  subtitle,
+  compact = false,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  icon: LucideIcon;
+  tone: Tone;
+  title: string;
+  subtitle?: string;
+  compact?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      className={cn(
+        "group flex flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition-all duration-200",
+        compact && "flex-row py-2 ps-3 pe-2 text-start",
+        selected
+          ? "border-primary bg-accent/60 ring-2 ring-primary/25"
+          : "border-border bg-card hover:border-emerald-300 hover:bg-muted/40 dark:hover:border-emerald-800"
+      )}
+    >
+      <span
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105",
+          compact ? "h-7 w-7" : "h-8 w-8",
+          TONE_CHIP[tone]
+        )}
+        aria-hidden
+      >
+        <Icon className={compact ? "h-3.5 w-3.5" : "h-4 w-4"} />
+      </span>
+      <span className="min-w-0">
+        <span
+          className={cn(
+            "block font-semibold leading-5",
+            compact ? "text-[11px]" : "text-xs",
+            selected ? "text-accent-foreground" : "text-foreground"
+          )}
+        >
+          {title}
+        </span>
+        {subtitle && !compact && (
+          <span className="mt-0.5 block text-[10px] leading-4 text-muted-foreground">
+            {subtitle}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// دیالوگ / دراور بسته به اندازه صفحه
+// ---------------------------------------------------------------------------
+
 export function TransactionFormDialog({
   open: controlledOpen,
   onOpenChange,
   trigger,
 }: Props) {
+  const isMobile = useIsMobile();
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
 
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={setOpen}>
+        {trigger ? <DrawerTrigger asChild>{trigger}</DrawerTrigger> : null}
+        <DrawerContent
+          className="flex flex-col gap-0 rounded-t-2xl p-0"
+          style={{ maxHeight: "94dvh", marginTop: 0 }}
+        >
+          {open ? <TransactionFormBody onClose={() => setOpen(false)} /> : null}
+        </DrawerContent>
+      </Drawer>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
-      <DialogContent className="flex max-h-[100dvh] flex-col gap-0 overflow-hidden p-0 sm:max-h-[90vh] sm:max-w-lg">
+      <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
         {open ? <TransactionFormBody onClose={() => setOpen(false)} /> : null}
       </DialogContent>
     </Dialog>
   );
 }
+
+// ---------------------------------------------------------------------------
+// بدنه فرم — مشترک بین موبایل و دسکتاپ
+// ---------------------------------------------------------------------------
+
+const QUICK_AMOUNTS: { value: number; label: string }[] = [
+  { value: 50_000, label: "۵۰ هزار" },
+  { value: 100_000, label: "۱۰۰ هزار" },
+  { value: 500_000, label: "۵۰۰ هزار" },
+  { value: 1_000_000, label: "۱ میلیون" },
+];
 
 function TransactionFormBody({ onClose }: { onClose: () => void }) {
   const currentUserId = useAccountingStore((s) => s.currentUserId);
@@ -85,7 +257,7 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
   const [effectiveAt, setEffectiveAt] = useState<string>(todayShamsiString());
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  // فاز D (error-placement + focus-management): خطای درون‌خطی نزدیک فیلد
+  // خطای درون‌خطی نزدیک فیلد + فوکوس اولین فیلد نامعتبر
   const [fieldErrors, setFieldErrors] = useState<{ cp?: string; amount?: string }>({});
   const cpTriggerRef = useRef<HTMLButtonElement>(null);
   const amountInputRef = useRef<HTMLInputElement>(null);
@@ -136,6 +308,13 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
     setFieldErrors((f) => (f.amount ? { ...f, amount: undefined } : f));
   }
 
+  function addQuickAmount(v: number) {
+    const base = Number.isFinite(amountNum) && amountNum > 0 ? amountNum : 0;
+    const next = base + v;
+    setAmountRaw(toPersianDigits(next.toLocaleString("en-US")));
+    setFieldErrors((f) => (f.amount ? { ...f, amount: undefined } : f));
+  }
+
   function handleCounterpartyChange(id: string) {
     setCounterpartyId(id);
     setFieldErrors((f) => (f.cp ? { ...f, cp: undefined } : f));
@@ -144,7 +323,6 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!currentUserId) return;
-    // فاز D: اعتبارسنجی درون‌خطی — خطا زیر فیلد + فوکوس اولین فیلد نامعتبر
     const errs: { cp?: string; amount?: string } = {};
     if (!counterpartyId)
       errs.cp = "انتخاب طرف حساب الزامی است — از فهرست بالا یکی را برگزینید.";
@@ -191,268 +369,318 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
   }
 
   const meta = KIND_META[kind];
+  const isCurrentKind = !meta.opening;
 
   return (
     <>
-      {/* ┌ هدر ثابت — همیشه دیده می‌شود ┐ */}
-      <DialogHeader className="shrink-0 items-start gap-1.5 border-b bg-gradient-to-l from-emerald-50/80 via-emerald-50/30 to-transparent p-4 pb-3 pr-12 text-right sm:p-6 sm:pb-4 sm:pr-14 dark:from-emerald-950/20 dark:via-emerald-950/5">
-        <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+      {/* ┌ هدر ثابت ┐ */}
+      <DrawerHeader
+        className="shrink-0 items-start gap-1.5 border-b bg-gradient-to-l from-emerald-50/90 via-emerald-50/30 to-transparent p-4 pb-3 text-right dark:from-emerald-950/25 dark:via-emerald-950/5"
+      >
+        <DrawerTitle className="flex items-center gap-2 text-base sm:text-lg">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <Plus className="h-4 w-4" />
           </span>
           ثبت تراکنش جدید
-        </DialogTitle>
-        <DialogDescription className="text-[11px] leading-5 sm:text-xs sm:leading-6">
-          رکورد در دفتر مستقل خودتان ثبت می‌شود — نیازی به ثبت متقابل طرف
-          مقابل نیست. اگر طرف حساب به کاربری لینک باشد، او رکورد شما را در
+        </DrawerTitle>
+        <DrawerDescription className="text-[11px] leading-5 sm:text-xs sm:leading-6">
+          رکورد در دفتر مستقل خودتان ثبت می‌شود — طرف حسابِ لینک‌شده آن را در
           بخش «وضعیت تراکنش‌های من در حساب دیگران» می‌بیند و می‌تواند کامنت
           بگذارد.
-        </DialogDescription>
-      </DialogHeader>
+        </DrawerDescription>
+      </DrawerHeader>
 
       <form
         onSubmit={handleSubmit}
         className="flex min-h-0 flex-1 flex-col"
       >
         {/* ┌ بدنه اسکرول‌شو ┐ */}
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-        {/* نوع عملیات — شش گزینه */}
-        <div className="space-y-2">
-          <Label>نوع عملیات</Label>
-          <Select value={kind} onValueChange={(v) => setKind(v as TxnKind)}>
-            <SelectTrigger className="h-11">
-              <SelectValue placeholder="یک نوع عملیات انتخاب کنید" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectLabel className="flex items-center gap-1 text-[11px]">
-                  <History className="h-3 w-3" />
-                  موجودی آغازین دفتر
-                </SelectLabel>
-                <SelectItem value="opening_claim">
-                  <span className="flex flex-col items-start py-0.5">
-                    <span>ثبت طلب اولیه — طرف حساب از ابتدا به من بدهکار است</span>
-                  </span>
-                </SelectItem>
-                <SelectItem value="opening_debt">
-                  <span className="flex flex-col items-start py-0.5">
-                    <span>ثبت بدهی اولیه — من از ابتدا به طرف حساب بدهکارم</span>
-                  </span>
-                </SelectItem>
-              </SelectGroup>
-              <SelectGroup>
-                <SelectLabel className="text-[11px]">عملیات جاری</SelectLabel>
-                {(["claim", "debt", "paid_to", "received_from"] as TxnKind[]).map(
-                  (k) => (
-                    <SelectItem key={k} value={k}>
-                      {KIND_META[k].label} — {KIND_META[k].description.split("—")[0].trim()}
-                    </SelectItem>
-                  )
-                )}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground bg-muted/40 rounded-md p-2 leading-relaxed">
-            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            <span>
-              {meta.receivedLike
-                ? "اثر بر مانده: بدهی شما به این طرف حساب زیاد (یا طلب شما کم) می‌شود."
-                : "اثر بر مانده: طلب شما از این طرف حساب زیاد (یا بدهی شما کم) می‌شود."}
-            </span>
-          </div>
-        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-6 scrollbar-persian">
+          {/* نوع عملیات — انتخابگر بصری */}
+          <div className="space-y-2">
+            <Label>نوع عملیات</Label>
 
-        {/* طرف حساب */}
-        <div className="space-y-2">
-          <Label>طرف حساب</Label>
-          <Select value={counterpartyId} onValueChange={handleCounterpartyChange}>
-            <SelectTrigger
-              ref={cpTriggerRef}
-              aria-invalid={!!fieldErrors.cp}
-              aria-describedby={fieldErrors.cp ? "cp-error" : undefined}
-              className="h-11"
+            {/* عملیات جاری — ۴ کارت */}
+            <div className="grid grid-cols-2 gap-2">
+              {CURRENT_KINDS.map((k) => (
+                <KindCard
+                  key={k.kind}
+                  selected={kind === k.kind}
+                  onClick={() => setKind(k.kind)}
+                  icon={k.icon}
+                  tone={k.tone}
+                  title={KIND_META[k.kind].label}
+                  subtitle={k.short}
+                />
+              ))}
+            </div>
+
+            {/* موجودی آغازین — ۲ کارت جمع‌وشونده کوچک‌تر */}
+            <div className="grid grid-cols-2 gap-2 rounded-xl border border-dashed border-amber-300/70 bg-amber-50/40 p-2 dark:border-amber-800/60 dark:bg-amber-950/15">
+              <p className="col-span-2 flex items-center gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                <History className="h-3 w-3" />
+                موجودی آغازین دفتر (اختیاری)
+              </p>
+              {OPENING_KINDS.map((k) => (
+                <KindCard
+                  key={k.kind}
+                  compact
+                  selected={kind === k.kind}
+                  onClick={() => setKind(k.kind)}
+                  icon={History}
+                  tone="amber"
+                  title={k.label}
+                />
+              ))}
+            </div>
+
+            {/* اثر بر مانده */}
+            <div
+              className={cn(
+                "flex items-start gap-1.5 rounded-md p-2 text-[11px] leading-relaxed",
+                meta.receivedLike
+                  ? "bg-rose-50 text-rose-800 dark:bg-rose-950/25 dark:text-rose-300"
+                  : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/25 dark:text-emerald-300"
+              )}
             >
-              <SelectValue
-                placeholder={
-                  sharedCps.length + privateCps.length === 0
-                    ? "هیچ طرف حسابی در دسترس نیست"
-                    : "یک طرف حساب انتخاب کنید"
-                }
-              />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectLabel className="text-[11px]">حساب‌های مشترک (با اجازه ادمین)</SelectLabel>
-                {sharedCps.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    <span className="flex items-center gap-2">
-                      {c.displayName}
-                      {c.linkedUserId && (
-                        <Badge
-                          variant="outline"
-                          className="h-4 px-1 text-[9px] gap-0.5 border-emerald-300 text-emerald-700"
-                        >
-                          <Link2 className="h-2 w-2" />
-                          {c.linkedUsername}
-                        </Badge>
-                      )}
-                    </span>
-                  </SelectItem>
-                ))}
-                {sharedCps.length === 0 && (
-                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-                    ادمین هنوز به شما دسترسی هیچ طرف‌حساب مشترکی نداده است
-                  </div>
-                )}
-              </SelectGroup>
-              {privateCps.length > 0 && (
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                {isCurrentKind
+                  ? meta.receivedLike
+                    ? "اثر بر مانده: بدهی شما به این طرف حساب زیاد (یا طلب شما کم) می‌شود."
+                    : "اثر بر مانده: طلب شما از این طرف حساب زیاد (یا بدهی شما کم) می‌شود."
+                  : "موجودی آغازین برای وارد کردن بدهی/طلب قدیمی به دفتر است."}
+              </span>
+            </div>
+          </div>
+
+          {/* طرف حساب */}
+          <div className="space-y-2">
+            <Label>
+              طرف حساب <span className="text-rose-500" aria-hidden>*</span>
+            </Label>
+            <Select value={counterpartyId} onValueChange={handleCounterpartyChange}>
+              <SelectTrigger
+                ref={cpTriggerRef}
+                aria-invalid={!!fieldErrors.cp}
+                aria-describedby={fieldErrors.cp ? "cp-error" : undefined}
+                className="h-11"
+              >
+                <SelectValue
+                  placeholder={
+                    sharedCps.length + privateCps.length === 0
+                      ? "هیچ طرف حسابی در دسترس نیست"
+                      : "یک طرف حساب انتخاب کنید"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
                 <SelectGroup>
-                  <SelectLabel className="flex items-center gap-1 text-[11px]">
-                    <Lock className="h-3 w-3" />
-                    حساب‌های شخصی من (فقط دفتر خودم)
+                  <SelectLabel className="text-[11px]">
+                    حساب‌های مشترک (با اجازه ادمین)
                   </SelectLabel>
-                  {privateCps.map((c) => (
+                  {sharedCps.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.displayName}
+                      <span className="flex items-center gap-2">
+                        {c.displayName}
+                        {c.linkedUserId && (
+                          <Badge
+                            variant="outline"
+                            className="h-4 gap-0.5 px-1 text-[9px] border-emerald-300 text-emerald-700"
+                          >
+                            <Link2 className="h-2 w-2" />
+                            {c.linkedUsername}
+                          </Badge>
+                        )}
+                      </span>
                     </SelectItem>
                   ))}
+                  {sharedCps.length === 0 && (
+                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                      ادمین هنوز به شما دسترسی هیچ طرف‌حساب مشترکی نداده است
+                    </div>
+                  )}
                 </SelectGroup>
-              )}
-            </SelectContent>
-          </Select>
-          {fieldErrors.cp && (
-            <p id="cp-error" role="alert" className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
-              {fieldErrors.cp}
-            </p>
-          )}
-          {selectedCp?.linkedUserId && (
-            <div className="flex items-start gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 rounded-md p-2 leading-relaxed">
-              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              <span>
-                این طرف حساب به کاربر «{selectedCp.linkedUsername}» لینک است؛
-                او این رکورد را در بخش «حساب دیگران» خود می‌بیند و می‌تواند
-                روی همین ردیف کامنت بگذارد.
-              </span>
-            </div>
-          )}
-          {selectedCp && !selectedCp.isShared && (
-            <div className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 rounded-md p-2 leading-relaxed">
-              <Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              <span>
-                طرف‌حساب شخصی شما — فقط در دفتر خودتان قابل استفاده است.
-              </span>
-            </div>
-          )}
-        </div>
+                {privateCps.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel className="flex items-center gap-1 text-[11px]">
+                      <Lock className="h-3 w-3" />
+                      حساب‌های شخصی من (فقط دفتر خودم)
+                    </SelectLabel>
+                    {privateCps.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+              </SelectContent>
+            </Select>
+            {fieldErrors.cp && (
+              <p
+                id="cp-error"
+                role="alert"
+                className="text-[11px] font-medium text-rose-600 dark:text-rose-400"
+              >
+                {fieldErrors.cp}
+              </p>
+            )}
+            {selectedCp?.linkedUserId && (
+              <div className="flex items-start gap-1.5 rounded-md bg-emerald-50 p-2 text-[11px] leading-relaxed text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  این طرف حساب به کاربر «{selectedCp.linkedUsername}» لینک است؛
+                  او این رکورد را در بخش «حساب دیگران» خود می‌بیند و می‌تواند
+                  روی همین ردیف کامنت بگذارد.
+                </span>
+              </div>
+            )}
+            {selectedCp && !selectedCp.isShared && (
+              <div className="flex items-start gap-1.5 rounded-md bg-amber-50 p-2 text-[11px] leading-relaxed text-amber-700 dark:bg-amber-950/20 dark:text-amber-400">
+                <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>طرف‌حساب شخصی شما — فقط در دفتر خودتان قابل استفاده است.</span>
+              </div>
+            )}
+          </div>
 
-        {/* دسته‌بندی */}
-        <div className="space-y-2">
-          <Label>دسته‌بندی (اختیاری)</Label>
-          <Select value={categoryId} onValueChange={setCategoryId}>
-            <SelectTrigger className="h-11">
-              <SelectValue placeholder="بدون دسته" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NONE}>بدون دسته</SelectItem>
-              {myCategories.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
+          {/* دسته‌بندی */}
+          <div className="space-y-2">
+            <Label>دسته‌بندی (اختیاری)</Label>
+            <Select value={categoryId} onValueChange={setCategoryId}>
+              <SelectTrigger className="h-11">
+                <SelectValue placeholder="بدون دسته" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>بدون دسته</SelectItem>
+                {myCategories.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {myCategories.length === 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                دسته‌بندی ندارید — از منوی «تنظیمات من» می‌توانید بسازید.
+              </div>
+            )}
+          </div>
+
+          {/* مبلغ + چیپ‌های سریع */}
+          <div className="space-y-2">
+            <Label htmlFor="amount">
+              مبلغ <span className="text-rose-500" aria-hidden>*</span>
+            </Label>
+            <div className="relative">
+              <Input
+                id="amount"
+                ref={amountInputRef}
+                dir="ltr"
+                aria-invalid={!!fieldErrors.amount}
+                aria-describedby={fieldErrors.amount ? "amount-error" : undefined}
+                className="h-12 pl-16 text-right text-lg font-bold tracking-wide"
+                placeholder="۰"
+                value={amountRaw}
+                onChange={(e) => handleAmountChange(e.target.value)}
+                inputMode="numeric"
+                disabled={submitting}
+              />
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-medium text-muted-foreground">
+                تومان
+              </span>
+            </div>
+            {/* چیپ‌های مبلغ سریع */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {QUICK_AMOUNTS.map((q) => (
+                <button
+                  key={q.value}
+                  type="button"
+                  onClick={() => addQuickAmount(q.value)}
+                  disabled={submitting}
+                  className="rounded-full border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-emerald-300 hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                >
+                  + {q.label}
+                </button>
               ))}
-            </SelectContent>
-          </Select>
-          {myCategories.length === 0 && (
-            <div className="text-[11px] text-muted-foreground">
-              دسته‌بندی ندارید — از منوی «تنظیمات من» می‌توانید بسازید.
+            </div>
+            {fieldErrors.amount && (
+              <p
+                id="amount-error"
+                role="alert"
+                className="text-[11px] font-medium text-rose-600 dark:text-rose-400"
+              >
+                {fieldErrors.amount}
+              </p>
+            )}
+          </div>
+
+          {/* تاریخ مؤثر */}
+          <div className="space-y-2">
+            <Label>تاریخ مؤثر (شمسی)</Label>
+            <JalaliDatePicker
+              value={effectiveAt}
+              onChange={setEffectiveAt}
+              placeholder="انتخاب تاریخ"
+            />
+            {effectiveAt && (
+              <div className="text-[11px] text-muted-foreground">
+                تاریخ انتخابی: {formatShamsiLong(effectiveAt)}
+              </div>
+            )}
+          </div>
+
+          {/* مانده فعلی با این طرف حساب */}
+          {selectedBalance && selectedBalance.transactionCount > 0 && (
+            <div className="rounded-xl border bg-muted/30 p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">
+                  مانده فعلی با {selectedCp?.displayName}:
+                </span>
+                {selectedBalance.net > 0 ? (
+                  <Badge className="rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                    بدهی{" "}
+                    {toPersianDigits(
+                      Math.abs(selectedBalance.net).toLocaleString("en-US")
+                    )}{" "}
+                    ت
+                  </Badge>
+                ) : selectedBalance.net < 0 ? (
+                  <Badge className="rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    طلب{" "}
+                    {toPersianDigits(
+                      Math.abs(selectedBalance.net).toLocaleString("en-US")
+                    )}{" "}
+                    ت
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="rounded-full">
+                    تسویه
+                  </Badge>
+                )}
+              </div>
             </div>
           )}
-        </div>
 
-        {/* مبلغ — واحد داخل فیلد (فاز ۴: بدون ردیف اضافی «واحد») */}
-        <div className="space-y-2">
-          <Label htmlFor="amount">مبلغ</Label>
-          <div className="relative">
-            <Input
-              id="amount"
-              ref={amountInputRef}
-              dir="ltr"
-              aria-invalid={!!fieldErrors.amount}
-              aria-describedby={fieldErrors.amount ? "amount-error" : undefined}
-              className="h-11 pl-16 text-right text-lg font-semibold tracking-wide"
-              placeholder="۰"
-              value={amountRaw}
-              onChange={(e) => handleAmountChange(e.target.value)}
-              inputMode="numeric"
+          {/* توضیحات */}
+          <div className="space-y-2">
+            <Label htmlFor="description">توضیحات (اختیاری)</Label>
+            <Textarea
+              id="description"
+              rows={2}
+              placeholder="مثلاً: پرداخت قسط وام"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
               disabled={submitting}
             />
-            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-medium text-muted-foreground">
-              تومان
-            </span>
           </div>
-          {fieldErrors.amount && (
-            <p id="amount-error" role="alert" className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
-              {fieldErrors.amount}
-            </p>
-          )}
         </div>
 
-        {/* تاریخ مؤثر */}
-        <div className="space-y-2">
-          <Label>تاریخ مؤثر (شمسی)</Label>
-          <JalaliDatePicker
-            value={effectiveAt}
-            onChange={setEffectiveAt}
-            placeholder="انتخاب تاریخ"
-          />
-          {effectiveAt && (
-            <div className="text-[11px] text-muted-foreground">
-              تاریخ انتخابی: {formatShamsiLong(effectiveAt)}
-            </div>
-          )}
-        </div>
-
-        {/* مانده فعلی با این طرف حساب */}
-        {selectedBalance && selectedBalance.transactionCount > 0 && (
-          <div className="rounded-md border bg-muted/30 p-3 text-sm">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-muted-foreground">
-                مانده فعلی با {selectedCp?.displayName}:
-              </span>
-              {selectedBalance.net > 0 ? (
-                <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                  بدهی {toPersianDigits(Math.abs(selectedBalance.net).toLocaleString("en-US"))} ت
-                </Badge>
-              ) : selectedBalance.net < 0 ? (
-                <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  طلب {toPersianDigits(Math.abs(selectedBalance.net).toLocaleString("en-US"))} ت
-                </Badge>
-              ) : (
-                <Badge variant="secondary">تسویه</Badge>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* توضیحات */}
-        <div className="space-y-2">
-          <Label htmlFor="description">توضیحات (اختیاری)</Label>
-          <Textarea
-            id="description"
-            rows={2}
-            placeholder="مثلاً: پرداخت قسط وام"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            disabled={submitting}
-          />
-        </div>
-        </div>
-
-        {/* ┌ فوتر ثابت — دکمه ثبت همیشه در دسترس است ┐ */}
-        <DialogFooter className="shrink-0 flex-col gap-2 border-t bg-card/70 p-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:flex-row sm:p-4 sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+        {/* ┌ فوتر چسبان — دکمه ثبت همیشه در دید ┐ */}
+        <DrawerFooter className="shrink-0 flex-col gap-2 border-t bg-card/80 p-4 pt-3 backdrop-blur-md sm:flex-row sm:px-6">
           <Button
             type="button"
             variant="outline"
-            className="h-11 w-full sm:w-auto"
+            className="h-11 w-full sm:w-auto sm:px-6"
             onClick={onClose}
             disabled={submitting}
           >
@@ -460,17 +688,17 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
           </Button>
           <Button
             type="submit"
-            className="h-11 w-full text-base font-semibold shadow-sm sm:w-auto sm:text-sm"
+            className="h-12 w-full flex-1 text-base font-bold shadow-fab sm:h-11 sm:flex-none sm:text-sm"
             disabled={submitting}
           >
             {submitting ? (
-              <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+              <Loader2 className="ml-2 h-4 w-4 animate-spin" />
             ) : (
-              <CheckCircle2 className="h-4 w-4 ml-2" />
+              <CheckCircle2 className="ml-2 h-4 w-4" />
             )}
             ثبت تراکنش
           </Button>
-        </DialogFooter>
+        </DrawerFooter>
       </form>
     </>
   );
