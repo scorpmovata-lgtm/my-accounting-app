@@ -137,7 +137,13 @@ function mapTransaction(r: any): Transaction {
 }
 
 function mapCategory(r: any): Category {
-  return { id: r.id, userId: r.user_id, name: r.name, createdAt: r.created_at };
+  return {
+    id: r.id,
+    userId: r.user_id,
+    name: r.name,
+    createdAt: r.created_at,
+    counterpartyId: r.counterparty_id ?? null,
+  };
 }
 
 function mapComment(r: any): TxnComment {
@@ -273,14 +279,21 @@ export async function fetchRealGrants(): Promise<AccessGrant[]> {
 // دسته‌بندی شخصی (RLS: مالک)
 // ---------------------------------------------------------------------------
 
-export async function createCategoryReal(name: string): Promise<Category> {
+export async function createCategoryReal(
+  name: string,
+  counterpartyId?: string | null
+): Promise<Category> {
   const c = getClient();
   if (!c) throw new Error("حالت واقعی فعال نیست.");
   const uid = (await c.auth.getSession()).data.session?.user.id;
   if (!uid) throw new Error("احراز هویت نشده.");
   const { data, error } = await c
     .from("categories")
-    .insert({ user_id: uid, name })
+    .insert({
+      user_id: uid,
+      name,
+      counterparty_id: counterpartyId ?? null,
+    })
     .select("*")
     .single();
   if (error) throw new Error(error.message);
@@ -291,6 +304,20 @@ export async function renameCategoryReal(id: string, name: string): Promise<void
   const c = getClient();
   if (!c) throw new Error("حالت واقعی فعال نیست.");
   const { error } = await c.from("categories").update({ name }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateCategoryReal(
+  id: string,
+  patch: { name?: string; counterpartyId?: string | null }
+): Promise<void> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const upd: Record<string, unknown> = {};
+  if (patch.name !== undefined) upd.name = patch.name;
+  if (patch.counterpartyId !== undefined) upd.counterparty_id = patch.counterpartyId;
+  if (Object.keys(upd).length === 0) return;
+  const { error } = await c.from("categories").update(upd).eq("id", id);
   if (error) throw new Error(error.message);
 }
 
@@ -398,6 +425,45 @@ export async function createTransactionReal(
   return {
     transaction: res.transaction ? mapTransaction(res.transaction) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// ویرایش و حذف تراکنش (Edge Function manage-transaction)
+//   - فقط صاحب دفتر می‌تواند (user_id === auth.uid)
+//   - ویرایش: اعتبارسنجی مجدد طرف‌حساب و دسته در EF
+//   - حذف: کامنت‌های تراکنش با cascade خودکار حذف می‌شوند
+// ---------------------------------------------------------------------------
+
+export interface UpdateTxnInput {
+  kind?: TxnKind;
+  counterpartyId?: string;
+  amount?: number;
+  currency?: "IRT" | "IRR";
+  effectiveAt?: string;
+  description?: string;
+  categoryId?: string | null;
+}
+
+export async function updateTransactionReal(
+  id: string,
+  patch: UpdateTxnInput
+): Promise<{ transaction: Transaction | null }> {
+  const body: Record<string, unknown> = {};
+  if (patch.kind !== undefined) body.kind = patch.kind;
+  if (patch.counterpartyId !== undefined) body.counterpartyId = patch.counterpartyId;
+  if (patch.amount !== undefined) body.amount = patch.amount;
+  if (patch.currency !== undefined) body.currency = patch.currency;
+  if (patch.effectiveAt !== undefined) body.effectiveAt = patch.effectiveAt;
+  if (patch.description !== undefined) body.description = patch.description;
+  if (patch.categoryId !== undefined) body.categoryId = patch.categoryId;
+  const res = await callEF("manage-transaction", "PUT", body, { id });
+  return {
+    transaction: res.transaction ? mapTransaction(res.transaction) : null,
+  };
+}
+
+export async function deleteTransactionReal(id: string): Promise<void> {
+  await callEF("manage-transaction", "DELETE", undefined, { id });
 }
 
 export async function adminCreateUserReal(input: {

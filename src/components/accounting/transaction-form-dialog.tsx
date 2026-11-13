@@ -1,16 +1,18 @@
 "use client";
 
-// فرم ثبت تراکنش — بازطراحی Premium
+// فرم ثبت/ویرایش تراکنش — بازطراحی Premium
 // ---------------------------------------------------------------
 // موبایل: Bottom Sheet (vaul) با فوتر چسبان — دکمه «ثبت تراکنش»
 //   همیشه در دید است (رفع باگ ناپدیدشدن دکمه در موبایل).
 // دسکتاپ: مودال مرکزی با فوتر ثابت.
 // انتخاب نوع عملیات: کارت‌های بصری دوستونی به‌جای دراپ‌داون متنی.
 // منطق اعتبارسنجی و ثبت بدون تغییر حفظ شده است.
+// v3.5: پشتیبانی از حالت ویرایش با editTransaction prop.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
+  Pencil,
   Loader2,
   Link2,
   Info,
@@ -62,6 +64,7 @@ import { JalaliDatePicker } from "./jalali-date-picker";
 import {
   KIND_META,
   type Currency,
+  type Transaction,
   type TxnKind,
 } from "@/lib/accounting/types";
 import { computeContactBalance } from "@/lib/accounting/engine";
@@ -77,6 +80,8 @@ interface Props {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   trigger?: React.ReactNode;
+  /** اگر پر شود، فرم در حالت ویرایش این تراکنش باز می‌شود */
+  editTransaction?: Transaction | null;
 }
 
 const NONE = "__none__";
@@ -159,7 +164,7 @@ function KindCard({
         compact && "flex-row py-2 ps-3 pe-2 text-start",
         selected
           ? "border-primary bg-accent/60 ring-2 ring-primary/25"
-          : "border-border bg-card hover:border-emerald-300 hover:bg-muted/40 dark:hover:border-emerald-800"
+          : "border-border bg-card hover:border-primary/40 hover:bg-muted/40"
       )}
     >
       <span
@@ -200,11 +205,13 @@ export function TransactionFormDialog({
   open: controlledOpen,
   onOpenChange,
   trigger,
+  editTransaction = null,
 }: Props) {
   const isMobile = useIsMobile();
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
+  const isEdit = !!editTransaction;
 
   if (isMobile) {
     return (
@@ -214,7 +221,12 @@ export function TransactionFormDialog({
           className="flex flex-col gap-0 rounded-t-2xl p-0"
           style={{ maxHeight: "94dvh", marginTop: 0 }}
         >
-          {open ? <TransactionFormBody onClose={() => setOpen(false)} /> : null}
+          {open ? (
+            <TransactionFormBody
+              onClose={() => setOpen(false)}
+              editTransaction={editTransaction}
+            />
+          ) : null}
         </DrawerContent>
       </Drawer>
     );
@@ -224,7 +236,12 @@ export function TransactionFormDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
-        {open ? <TransactionFormBody onClose={() => setOpen(false)} /> : null}
+        {open ? (
+          <TransactionFormBody
+            onClose={() => setOpen(false)}
+            editTransaction={editTransaction}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -241,21 +258,42 @@ const QUICK_AMOUNTS: { value: number; label: string }[] = [
   { value: 1_000_000, label: "۱ میلیون" },
 ];
 
-function TransactionFormBody({ onClose }: { onClose: () => void }) {
+function TransactionFormBody({
+  onClose,
+  editTransaction = null,
+}: {
+  onClose: () => void;
+  editTransaction?: Transaction | null;
+}) {
+  const isEdit = !!editTransaction;
   const currentUserId = useAccountingStore((s) => s.currentUserId);
   const counterparties = useAccountingStore((s) => s.counterparties);
   const categories = useAccountingStore((s) => s.categories);
   const transactions = useAccountingStore((s) => s.transactions);
   const addTransaction = useAccountingStore((s) => s.addTransaction);
+  const updateTransaction = useAccountingStore((s) => s.updateTransaction);
   const { toast } = useToast();
 
-  const [kind, setKind] = useState<TxnKind>("paid_to");
-  const [counterpartyId, setCounterpartyId] = useState("");
-  const [categoryId, setCategoryId] = useState<string>(NONE);
-  const [amountRaw, setAmountRaw] = useState("");
-  const [currency] = useState<Currency>("IRT");
-  const [effectiveAt, setEffectiveAt] = useState<string>(todayShamsiString());
-  const [description, setDescription] = useState("");
+  // مقداردهی اولیه: در حالت ویرایش از تراکنش موجود، در حالت ثبت از پیش‌فرض
+  const [kind, setKind] = useState<TxnKind>(editTransaction?.kind ?? "paid_to");
+  const [counterpartyId, setCounterpartyId] = useState(
+    editTransaction?.counterpartyId ?? ""
+  );
+  const [categoryId, setCategoryId] = useState<string>(
+    editTransaction?.categoryId ?? NONE
+  );
+  const [amountRaw, setAmountRaw] = useState(
+    editTransaction
+      ? toPersianDigits(editTransaction.amount.toLocaleString("en-US"))
+      : ""
+  );
+  const [currency] = useState<Currency>(editTransaction?.currency ?? "IRT");
+  const [effectiveAt, setEffectiveAt] = useState<string>(
+    editTransaction?.effectiveAt ?? todayShamsiString()
+  );
+  const [description, setDescription] = useState(
+    editTransaction?.description ?? ""
+  );
   const [submitting, setSubmitting] = useState(false);
   // خطای درون‌خطی نزدیک فیلد + فوکوس اولین فیلد نامعتبر
   const [fieldErrors, setFieldErrors] = useState<{ cp?: string; amount?: string }>({});
@@ -285,6 +323,27 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
     () => categories.filter((c) => c.userId === currentUserId),
     [categories, currentUserId]
   );
+
+  // دسته‌های قابل انتخاب برای طرف‌حسابِ فعلی:
+  //   - عمومی (counterpartyId === null): همه طرف‌حساب‌ها
+  //   - مخصوص این طرف‌حساب (counterpartyId === counterpartyId)
+  const availableCategories = useMemo(() => {
+    if (!counterpartyId) return [];
+    return myCategories.filter(
+      (c) => !c.counterpartyId || c.counterpartyId === counterpartyId
+    );
+  }, [myCategories, counterpartyId]);
+
+  // وقتی طرف‌حساب تغییر می‌کند، اگر دسته‌ی انتخاب‌شده مخصوص طرف‌حساب قدیمی
+  // بوده (یا طرف‌حساب خالی شده)، انتخاب دسته را پاک می‌کنیم.
+  useEffect(() => {
+    if (!categoryId || categoryId === NONE) return;
+    const cat = myCategories.find((c) => c.id === categoryId);
+    if (!cat) return;
+    if (cat.counterpartyId && cat.counterpartyId !== counterpartyId) {
+      setCategoryId(NONE);
+    }
+  }, [counterpartyId, categoryId, myCategories]);
 
   const selectedCp = counterparties.find((c) => c.id === counterpartyId);
   const selectedBalance =
@@ -340,6 +399,40 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
     }
     setSubmitting(true);
     await new Promise((r) => setTimeout(r, 200));
+
+    if (isEdit && editTransaction) {
+      // ---- حالت ویرایش ----
+      const result = await updateTransaction(
+        editTransaction.id,
+        {
+          kind,
+          counterpartyId,
+          amount: amountNum,
+          currency,
+          effectiveAt,
+          description: description.trim() || undefined,
+          categoryId: categoryId === NONE ? null : categoryId,
+        },
+        currentUserId
+      );
+      setSubmitting(false);
+      if (!result.ok) {
+        toast({ title: "خطا در ویرایش", description: result.error, variant: "destructive" });
+        return;
+      }
+      const cp = counterparties.find((c) => c.id === counterpartyId);
+      const kindLabel = KIND_META[kind].label;
+      toast({
+        title: "تراکنش به‌روزرسانی شد",
+        description: `«${kindLabel} ${cp?.displayName}» با مبلغ ${toPersianDigits(
+          amountNum.toLocaleString("en-US")
+        )} تومان به‌روزرسانی شد.`,
+      });
+      onClose();
+      return;
+    }
+
+    // ---- حالت ثبت جدید ----
     const result = await addTransaction(
       {
         kind,
@@ -375,18 +468,22 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
     <>
       {/* ┌ هدر ثابت ┐ */}
       <DrawerHeader
-        className="shrink-0 items-start gap-1.5 border-b bg-gradient-to-l from-emerald-50/90 via-emerald-50/30 to-transparent p-4 pb-3 text-right dark:from-emerald-950/25 dark:via-emerald-950/5"
+        className="shrink-0 items-start gap-1.5 border-b brand-tint-gradient p-4 pb-3 text-right"
       >
         <DrawerTitle className="flex items-center gap-2 text-base sm:text-lg">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <Plus className="h-4 w-4" />
+            {isEdit ? (
+              <Pencil className="h-4 w-4" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
           </span>
-          ثبت تراکنش جدید
+          {isEdit ? "ویرایش تراکنش" : "ثبت تراکنش جدید"}
         </DrawerTitle>
         <DrawerDescription className="text-[11px] leading-5 sm:text-xs sm:leading-6">
-          رکورد در دفتر مستقل خودتان ثبت می‌شود — طرف حسابِ لینک‌شده آن را در
-          بخش «وضعیت تراکنش‌های من در حساب دیگران» می‌بیند و می‌تواند کامنت
-          بگذارد.
+          {isEdit
+            ? "فیلدهای تراکنش را اصلاح کنید و ذخیره کنید. این رکورد متعلق به دفتر خود شماست."
+            : "رکورد در دفتر مستقل خودتان ثبت می‌شود — طرف حسابِ لینک‌شده آن را در بخش «وضعیت تراکنش‌های من در حساب دیگران» می‌بیند و می‌تواند کامنت بگذارد."}
         </DrawerDescription>
       </DrawerHeader>
 
@@ -552,16 +649,45 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={NONE}>بدون دسته</SelectItem>
-                {myCategories.map((c) => (
+                {availableCategories.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.name}
+                    <span className="flex items-center gap-1.5">
+                      {c.name}
+                      {c.counterpartyId ? (
+                        <Badge
+                          variant="outline"
+                          className="h-4 px-1 text-[9px] gap-0.5 border-primary/40 text-primary"
+                        >
+                          مخصوص این طرف‌حساب
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="h-4 px-1 text-[9px] gap-0.5 text-muted-foreground"
+                        >
+                          عمومی
+                        </Badge>
+                      )}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {myCategories.length === 0 && (
+            {!counterpartyId && (
               <div className="text-[11px] text-muted-foreground">
-                دسته‌بندی ندارید — از منوی «تنظیمات من» می‌توانید بسازید.
+                ابتدا طرف‌حساب را انتخاب کنید تا دسته‌های قابل استفاده نمایش داده شوند.
+              </div>
+            )}
+            {counterpartyId && availableCategories.length === 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                هیچ دسته‌ای برای این طرف‌حساب قابل استفاده نیست — از منوی «تنظیمات من»
+                می‌توانید دسته عمومی یا مخصوص این طرف‌حساب بسازید.
+              </div>
+            )}
+            {counterpartyId && availableCategories.length > 0 && (
+              <div className="text-[11px] text-muted-foreground">
+                {toPersianDigits(availableCategories.length.toString())} دسته قابل
+                انتخاب (عمومی + مخصص این طرف‌حساب).
               </div>
             )}
           </div>
@@ -597,7 +723,7 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
                   type="button"
                   onClick={() => addQuickAmount(q.value)}
                   disabled={submitting}
-                  className="rounded-full border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-emerald-300 hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                  className="rounded-full border bg-card px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
                 >
                   + {q.label}
                 </button>
@@ -696,7 +822,7 @@ function TransactionFormBody({ onClose }: { onClose: () => void }) {
             ) : (
               <CheckCircle2 className="ml-2 h-4 w-4" />
             )}
-            ثبت تراکنش
+            {isEdit ? "ذخیره تغییرات" : "ثبت تراکنش"}
           </Button>
         </DrawerFooter>
       </form>

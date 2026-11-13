@@ -13,6 +13,9 @@ import {
   History,
   Lock,
   Tag,
+  Pencil,
+  Trash2,
+  AlertCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Input } from "@/components/ui/input";
@@ -29,6 +32,17 @@ import {
   Card,
   CardContent,
 } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   useAccountingStore,
@@ -43,10 +57,12 @@ import {
   type Transaction,
 } from "@/lib/accounting/types";
 import { TxnCommentsThread } from "./txn-comments-thread";
+import { TransactionFormDialog } from "./transaction-form-dialog";
 import {
   formatShamsiShort,
   toPersianDigits,
 } from "@/lib/accounting/jalali";
+import { useToast } from "@/hooks/use-toast";
 
 const ALL = "all";
 
@@ -222,6 +238,8 @@ function TxnCard({ txn }: { txn: Transaction }) {
   const cat = categories.find((c) => c.id === txn.categoryId);
   const receivedLike = isReceivedLike(txn.kind);
   const opening = isOpening(txn.kind);
+  // فقط صاحب دفتر می‌تواند ویرایش/حذف کند
+  const isOwner = !!currentUserId && txn.userId === currentUserId;
 
   const commentCount = useMemo(() => {
     if (!currentUserId) return 0;
@@ -339,7 +357,7 @@ function TxnCard({ txn }: { txn: Transaction }) {
           </div>
         </button>
 
-        {/* بخش بازشدنی: کامنت‌ها */}
+        {/* بخش بازشدنی: کامنت‌ها + دکمه‌های ویرایش/حذف برای صاحب تراکنش */}
         <AnimatePresence initial={false}>
           {open && (
             <motion.div
@@ -350,9 +368,32 @@ function TxnCard({ txn }: { txn: Transaction }) {
               transition={{ duration: 0.22, ease: "easeInOut" }}
               className="overflow-hidden border-t bg-muted/20"
             >
-              <div className="p-3">
+              <div className="p-3 space-y-3">
+                {/* نوار اکشن صاحب تراکنش */}
+                {isOwner && (
+                  <div className="flex items-center justify-between gap-2 rounded-xl border bg-card/80 p-2 shadow-soft">
+                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Pencil className="h-3 w-3" />
+                      این تراکنش را شما ثبت کرده‌اید — می‌توانید ویرایش یا حذف کنید.
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <EditTransactionButton txn={txn} />
+                      <DeleteTransactionButton txn={txn} />
+                    </div>
+                  </div>
+                )}
+                {/* نوار اطلاع برای کاربرِ موضوع تراکنش (غير صاحب) */}
+                {!isOwner && cp?.linkedUserId === currentUserId && (
+                  <div className="flex items-start gap-1.5 rounded-xl border border-amber-200/60 bg-amber-50/60 p-2 text-[11px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/20 dark:text-amber-300 leading-relaxed">
+                    <Lock className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>
+                      این رکورد را کاربر دیگری ثبت کرده است؛ شما فقط می‌توانید
+                      کامنت بگذارید و ویرایش/حذف آن برای شما ممکن نیست.
+                    </span>
+                  </div>
+                )}
                 {cp?.linkedUserId && (
-                  <div className="mb-2 flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
+                  <div className="flex items-start gap-1.5 text-[11px] text-muted-foreground leading-relaxed">
                     <MessageCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                     <span>
                       کاربر «{cp.linkedUsername}» این رکورد را در بخش «حساب
@@ -368,5 +409,110 @@ function TxnCard({ txn }: { txn: Transaction }) {
         </AnimatePresence>
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// دکمه ویرایش تراکنش — باز می‌کند همان فرم ثبت ولی در حالت edit
+// ---------------------------------------------------------------------------
+
+function EditTransactionButton({ txn }: { txn: Transaction }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <TransactionFormDialog
+      open={open}
+      onOpenChange={setOpen}
+      editTransaction={txn}
+      trigger={
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1 px-2 text-xs"
+          title="ویرایش تراکنش"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          ویرایش
+        </Button>
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// دکمه حذف تراکنش — با تأیید alertDialog
+// ---------------------------------------------------------------------------
+
+function DeleteTransactionButton({ txn }: { txn: Transaction }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleDelete() {
+    const { currentUserId, deleteTransaction } = useAccountingStore.getState();
+    if (!currentUserId) return;
+    setSubmitting(true);
+    const result = await deleteTransaction(txn.id, currentUserId);
+    setSubmitting(false);
+    setOpen(false);
+    if (!result.ok) {
+      toast({
+        title: "خطا در حذف",
+        description: result.error,
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({
+      title: "تراکنش حذف شد",
+      description: `رکورد ${toPersianDigits(
+        txn.amount.toLocaleString("en-US")
+      )} تومان با موفقیت از دفتر شما حذف شد.`,
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+          title="حذف تراکنش"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          حذف
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <AlertCircle className="h-5 w-5 text-rose-600" />
+            حذف تراکنش؟
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            این عملیات قابل بازگشت نیست. تراکنش{" "}
+            <span className="font-medium">
+              «{KIND_META[txn.kind].label} — {toPersianDigits(
+                txn.amount.toLocaleString("en-US")
+              )}{" "}
+              تومان»
+            </span>{" "}
+            به‌همراه کامنت‌های روی آن (در صورت وجود) برای همیشه از دفتر شما حذف
+            می‌شود. طرف حسابِ لینک‌شده دیگر این رکورد را در بخش «حساب دیگران»
+            خود نخواهد دید.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={submitting}>انصراف</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={submitting}
+            className="bg-rose-600 hover:bg-rose-700 focus:ring-rose-600"
+          >
+            {submitting ? "در حال حذف..." : "بله، حذف کن"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

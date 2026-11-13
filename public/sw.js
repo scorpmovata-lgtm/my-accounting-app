@@ -2,7 +2,7 @@
 // - کش کردن app shell (HTML, JS, CSS, فونت, آیکون‌ها) برای کار آفلاین
 // - استراتژی: network-first برای navigation، cache-first برای assets
 
-const CACHE_VERSION = "accounting-v1";
+const CACHE_VERSION = "accounting-v3-4";
 const APP_SHELL = [
   "/",
   "/manifest.json",

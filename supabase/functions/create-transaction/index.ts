@@ -97,12 +97,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    // دسته‌بندی باید متعلق به خود کاربر باشد
+    // دسته‌بندی باید متعلق به خود کاربر باشد و (در صورت مخصوص بودن) با
+    // طرف‌حسابِ همین تراکنش منطبق باشد. دسته‌های «عمومی» (counterparty_id=null)
+    // با همه طرف‌حساب‌ها قابل استفاده‌اند.
     if (categoryId) {
       const { data: cat } = await admin
-        .from("categories").select("id").eq("id", categoryId)
+        .from("categories").select("id, counterparty_id").eq("id", categoryId)
         .eq("user_id", user.id).maybeSingle();
       if (!cat) return json({ error: "دسته‌بندی نامعتبر است" }, 400);
+      if (cat.counterparty_id && cat.counterparty_id !== counterpartyId) {
+        return json(
+          { error: "این دسته‌بندی مخصص طرف‌حساب دیگری است و برای این تراکنش قابل استفاده نیست" },
+          400
+        );
+      }
     }
 
     // idempotency: اگر تراکنش با همین کلید قبلاً ثبت شده، همان را برگردان

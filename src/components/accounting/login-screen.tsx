@@ -1,8 +1,8 @@
 "use client";
 
-// صفحه ورود «وصـد» — Premium Fintech
+// صفحه ورود «دفتر حساب کتاب» — Premium Fintech
 // ---------------------------------------------------------------
-// پس‌زمینه گرادیانی با هاله‌های زمردی + کارت شیشه‌ای + برندینگ ود.
+// پس‌زمینه گرادیانی با هاله‌های برند (قالب انتخابی) + کارت شیشه‌ای.
 // منطق ورود (موک/واقعی) بدون تغییر حفظ شده است.
 
 import { useState } from "react";
@@ -63,18 +63,18 @@ export function LoginScreen() {
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-gradient-to-b from-emerald-50/60 via-background to-background dark:from-emerald-950/25">
-      {/* هاله‌های تزئینی */}
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-gradient-to-b from-primary/10 via-background to-background dark:from-primary/15">
+      {/* هاله‌های تزئینی — هم‌رنگ قالب انتخابی */}
       <div
-        className="pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-emerald-200/40 blur-3xl dark:bg-emerald-800/20"
+        className="brand-halo-1 pointer-events-none absolute -top-24 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full blur-3xl"
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -bottom-32 right-[-4rem] h-80 w-80 rounded-full bg-emerald-100/50 blur-3xl dark:bg-emerald-900/15"
+        className="brand-halo-2 pointer-events-none absolute -bottom-32 right-[-4rem] h-80 w-80 rounded-full blur-3xl"
         aria-hidden
       />
       <div
-        className="pointer-events-none absolute -left-24 top-1/3 h-64 w-64 rounded-full bg-teal-100/40 blur-3xl dark:bg-teal-900/10"
+        className="brand-halo-3 pointer-events-none absolute -left-24 top-1/3 h-64 w-64 rounded-full blur-3xl"
         aria-hidden
       />
 
@@ -97,12 +97,12 @@ export function LoginScreen() {
           <CardContent className="p-6 sm:p-8">
             {/* برندینگ */}
             <div className="mb-6 text-center">
-              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-bl from-emerald-500 to-emerald-700 shadow-fab">
+              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-2xl brand-gradient shadow-fab">
                 <BookOpenText className="h-8 w-8 text-white" />
               </div>
-              <h1 className="text-2xl font-extrabold tracking-tight">وصـد</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight">دفتر حساب کتاب</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                دفتر بدهی و طلب — چندکاربری با دید دوجانبه
+                بدهی و طلب — چندکاربری با دید دوجانبه
               </p>
             </div>
 
@@ -195,14 +195,14 @@ export function LoginScreen() {
                 ) : (
                   <LogIn className="ml-2 h-4 w-4" />
                 )}
-                ورود به وصـد
+                ورود به دفتر حساب کتاب
               </Button>
             </form>
 
             {/* راهنمای ورود نمایشی — فقط در حالت موک */}
             {!realMode && (
-              <div className="mt-5 space-y-2 rounded-xl border border-emerald-200/70 bg-emerald-50/60 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/20">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+              <div className="mt-5 space-y-2 rounded-xl border border-primary/25 bg-primary/5 p-3 dark:border-primary/25 dark:bg-primary/10">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
                   <Info className="h-3.5 w-3.5" />
                   حساب‌های نمایشی (رمز همه: {toPersianDigits("1234")})
                 </div>
@@ -216,9 +216,9 @@ export function LoginScreen() {
                       key={d.u}
                       type="button"
                       onClick={() => fillDemo(d.u)}
-                      className="flex items-center justify-between rounded-lg border border-emerald-200/50 bg-white/70 px-2.5 py-2 text-right text-xs transition-colors hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-800/50 dark:bg-background/40 dark:hover:bg-emerald-950/30"
+                      className="flex items-center justify-between rounded-lg border border-primary/20 bg-card/70 px-2.5 py-2 text-right text-xs transition-colors hover:border-primary/40 hover:bg-primary/5 dark:border-primary/20 dark:bg-background/40 dark:hover:bg-primary/10"
                     >
-                      <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                      <span className="font-mono font-semibold text-primary">
                         {d.u}
                       </span>
                       <span className="text-muted-foreground">{d.label}</span>
@@ -233,7 +233,7 @@ export function LoginScreen() {
 
       <footer className="relative z-10 border-t bg-card/60 backdrop-blur-sm">
         <div className="mx-auto max-w-6xl px-4 py-3 text-center text-xs text-muted-foreground">
-          وصـد — نسخه {toPersianDigits(APP_VERSION)}
+          دفتر حساب کتاب — نسخه {toPersianDigits(APP_VERSION)}
         </div>
       </footer>
     </div>

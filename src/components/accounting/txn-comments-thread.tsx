@@ -117,14 +117,14 @@ export function TxnCommentsThread({
                 <div
                   className={`max-w-[85%] rounded-2xl px-3 py-2 ${
                     isMine
-                      ? "border border-emerald-200/70 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-950/30"
+                      ? "border border-primary/25 bg-primary/10 dark:border-primary/25 dark:bg-primary/15"
                       : "border bg-muted"
                   }`}
                 >
                   <div className="mb-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] leading-4">
                     <span className="font-medium">{c.authorName}</span>
                     {isMine && (
-                      <span className="text-emerald-700 dark:text-emerald-400">
+                      <span className="text-primary">
                         (من)
                       </span>
                     )}
@@ -138,7 +138,7 @@ export function TxnCommentsThread({
                 </div>
                 {isMine && (
                   <Avatar className="size-7 shrink-0">
-                    <AvatarFallback className="bg-emerald-100 text-[10px] font-bold text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300">
+                    <AvatarFallback className="bg-primary/15 text-[10px] font-bold text-primary dark:bg-primary/25">
                       {nameLetter(c.authorName)}
                     </AvatarFallback>
                   </Avatar>

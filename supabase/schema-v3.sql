@@ -104,10 +104,12 @@ alter table public.counterparty_access
   add column if not exists created_at timestamptz not null default now();
 
 -- ۱-۴) دسته‌بندی‌های شخصی هر کاربر
+--   counterparty_id: null → عمومی (همه طرف‌حساب‌ها) | پر شده → مخصوص همان طرف‌حساب
 create table if not exists public.categories (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
+  counterparty_id uuid references public.counterparties(id) on delete cascade,
   created_at timestamptz not null default now(),
   unique (user_id, name)
 );
@@ -116,7 +118,12 @@ create table if not exists public.categories (
 alter table public.categories
   add column if not exists user_id uuid references auth.users(id) on delete cascade,
   add column if not exists name text,
-  add column if not exists created_at timestamptz not null default now();
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists counterparty_id uuid references public.counterparties(id) on delete cascade;
+
+-- ستون counterparty_id به جدول موجود اضافه می‌شود (در نسخه ۳.۶)
+-- در صورت وجود constraint قدیمی (فقط user_id+name) آن را رها نمی‌کنیم چون
+-- هم چنین معتبر است (نام تکراری مجاز نیست حتی بین عمومی/مخصوص).
 
 -- ۱-۵) کامنت روی ردیف تراکنش (دوطرفه)
 create table if not exists public.transaction_comments (
@@ -284,6 +291,21 @@ drop policy if exists "tx_select_own" on public.transactions;
 create policy "tx_select_own" on public.transactions
   for select to authenticated
   using (public.txn_visible_to_me(id));
+
+-- سیاست ویرایش/حذف: فقط صاحب دفتر می‌تواند تراکنش خودش را تغییر دهد
+-- (نوشتن واقعی از طریق Edge Function manage-transaction با service_role
+--  انجام می‌شود، اما این سیاست‌ها لایه‌ی مضاعف امنیتی فراهم می‌کنند
+--  تا هیچ‌کس خارج از مالک نتواند مستقیماً روی جدول بنویسد.)
+drop policy if exists "tx_update_own" on public.transactions;
+create policy "tx_update_own" on public.transactions
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+drop policy if exists "tx_delete_own" on public.transactions;
+create policy "tx_delete_own" on public.transactions
+  for delete to authenticated
+  using (user_id = auth.uid());
 
 -- ============================================================
 -- ۸) RLS: کامنت‌ها

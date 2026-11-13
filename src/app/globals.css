@@ -6,7 +6,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-vazirmatn);
+  --font-sans: var(--font-app);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -44,17 +44,18 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* توکن‌های سایه نرم — سبک Fintech Premium (کارت‌های شناور ملایم) */
+/* توکن‌های سایه نرم — سبک Fintech Premium (کارت‌های شناور ملایم)
+   رنگ سایه با قالب انتخابی هماهنگ می‌شود (rgb برند) */
 @theme {
   --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 30px -14px rgb(15 23 42 / 0.10);
-  --shadow-lift: 0 2px 6px rgb(15 23 42 / 0.05), 0 18px 44px -18px rgb(5 150 105 / 0.22);
-  --shadow-fab: 0 4px 14px rgb(5 150 105 / 0.40), 0 2px 6px rgb(15 23 42 / 0.12);
+  --shadow-lift: 0 2px 6px rgb(15 23 42 / 0.05), 0 18px 44px -18px rgb(var(--brand-shadow) / 0.22);
+  --shadow-fab: 0 4px 14px rgb(var(--brand-shadow) / 0.40), 0 2px 6px rgb(15 23 42 / 0.12);
 }
 
 /* ---------------------------------------------------------------------------
-   پالت روشن — Premium Fintech (وصـد)
+   پالت روشن — Premium Fintech (دفتر حساب کتاب)
    Background #F8FAFC · Surface #FFFFFF · Text #0F172A / #64748B · Border #E2E8F0
-   Primary #059669 · Primary Dark #047857 · Mint #D1FAE5
+   قالب پیش‌فرض: زمردی #059669 — قالب‌های دیگر با data-brand روی <html>
 --------------------------------------------------------------------------- */
 :root {
   --radius: 0.75rem;
@@ -93,6 +94,38 @@
   --sidebar-accent-foreground: #064e3b;
   --sidebar-border: #e2e8f0;
   --sidebar-ring: #059669;
+  /* توکن‌های گرادیان برند (زمردی — پیش‌فرض) */
+  --brand-from: #10b981;
+  --brand-to: #047857;
+  --brand-from-deep: #059669;
+  --brand-to-deep: #065f46;
+  --brand-shadow: 5 150 105;
+  /* فونت فعال سامانه — با data-font روی <html> عوض می‌شود */
+  --font-app: var(--font-vazirmatn);
+}
+
+/* ---------------------------------------------------------------------------
+   فونت‌های قابل انتخاب سامانه — ۷ فونت فارسی
+   متغیر هر فونت از next/font روی <body> تعریف می‌شود؛ انتخاب کاربر
+   فقط --font-app را عوض می‌کند و بقیه فونت‌ها بارگذاری نمی‌شوند.
+--------------------------------------------------------------------------- */
+[data-font="naskh"] {
+  --font-app: var(--font-noto-naskh), var(--font-vazirmatn);
+}
+[data-font="kufi"] {
+  --font-app: var(--font-noto-kufi), var(--font-vazirmatn);
+}
+[data-font="plex"] {
+  --font-app: var(--font-plex-arabic), var(--font-vazirmatn);
+}
+[data-font="cairo"] {
+  --font-app: var(--font-cairo), var(--font-vazirmatn);
+}
+[data-font="messiri"] {
+  --font-app: var(--font-el-messiri), var(--font-vazirmatn);
+}
+[data-font="markazi"] {
+  --font-app: var(--font-markazi), var(--font-vazirmatn);
 }
 
 /* ---------------------------------------------------------------------------
@@ -132,6 +165,136 @@
   --sidebar-accent-foreground: #a7f3d0;
   --sidebar-border: rgb(255 255 255 / 8%);
   --sidebar-ring: #10b981;
+}
+
+/* ---------------------------------------------------------------------------
+   قالب‌های رنگی سامانه — انتخاب از «مدیریت سامانه → نمایش و شخصی‌سازی»
+   data-brand روی <html>؛ رنگ‌های معنایی (درآمد سبز / هزینه قرمز / هشدار
+   نارنجی) ثابت می‌مانند و فقط رنگ برند (دکمه‌ها، لوگو، اکسنت) عوض می‌شود.
+--------------------------------------------------------------------------- */
+
+/* ─── سرمه‌ای ─── */
+[data-brand="navy"] {
+  --primary: #1e40af;
+  --primary-foreground: #ffffff;
+  --accent: #dbeafe;
+  --accent-foreground: #1e3a8a;
+  --ring: #1e40af;
+  --sidebar-primary: #1e40af;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #dbeafe;
+  --sidebar-accent-foreground: #1e3a8a;
+  --sidebar-ring: #1e40af;
+  --brand-from: #3b82f6;
+  --brand-to: #1e3a8a;
+  --brand-from-deep: #2563eb;
+  --brand-to-deep: #1e3a8a;
+  --brand-shadow: 30 64 175;
+}
+.dark[data-brand="navy"] {
+  --primary: #60a5fa;
+  --primary-foreground: #172554;
+  --accent: #172554;
+  --accent-foreground: #93c5fd;
+  --ring: #60a5fa;
+  --sidebar-primary: #60a5fa;
+  --sidebar-primary-foreground: #172554;
+  --sidebar-accent: #172554;
+  --sidebar-accent-foreground: #93c5fd;
+  --sidebar-ring: #60a5fa;
+}
+
+/* ─── بنفش ─── */
+[data-brand="purple"] {
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+  --accent: #ede9fe;
+  --accent-foreground: #4c1d95;
+  --ring: #7c3aed;
+  --sidebar-primary: #7c3aed;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ede9fe;
+  --sidebar-accent-foreground: #4c1d95;
+  --sidebar-ring: #7c3aed;
+  --brand-from: #8b5cf6;
+  --brand-to: #6d28d9;
+  --brand-from-deep: #7c3aed;
+  --brand-to-deep: #5b21b6;
+  --brand-shadow: 124 58 237;
+}
+.dark[data-brand="purple"] {
+  --primary: #a78bfa;
+  --primary-foreground: #2e1065;
+  --accent: #2e1065;
+  --accent-foreground: #c4b5fd;
+  --ring: #a78bfa;
+  --sidebar-primary: #a78bfa;
+  --sidebar-primary-foreground: #2e1065;
+  --sidebar-accent: #2e1065;
+  --sidebar-accent-foreground: #c4b5fd;
+  --sidebar-ring: #a78bfa;
+}
+
+/* ─── ارغوانی ─── */
+[data-brand="magenta"] {
+  --primary: #a21caf;
+  --primary-foreground: #ffffff;
+  --accent: #fae8ff;
+  --accent-foreground: #701a75;
+  --ring: #a21caf;
+  --sidebar-primary: #a21caf;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fae8ff;
+  --sidebar-accent-foreground: #701a75;
+  --sidebar-ring: #a21caf;
+  --brand-from: #c026a3;
+  --brand-to: #86198f;
+  --brand-from-deep: #a21caf;
+  --brand-to-deep: #701a75;
+  --brand-shadow: 162 28 175;
+}
+.dark[data-brand="magenta"] {
+  --primary: #e879f9;
+  --primary-foreground: #4a044e;
+  --accent: #4a044e;
+  --accent-foreground: #f0abfc;
+  --ring: #e879f9;
+  --sidebar-primary: #e879f9;
+  --sidebar-primary-foreground: #4a044e;
+  --sidebar-accent: #4a044e;
+  --sidebar-accent-foreground: #f0abfc;
+  --sidebar-ring: #e879f9;
+}
+
+/* ─── صورتی ملایم ─── */
+[data-brand="pink"] {
+  --primary: #db2777;
+  --primary-foreground: #ffffff;
+  --accent: #fce7f3;
+  --accent-foreground: #9d174d;
+  --ring: #db2777;
+  --sidebar-primary: #db2777;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #fce7f3;
+  --sidebar-accent-foreground: #9d174d;
+  --sidebar-ring: #db2777;
+  --brand-from: #f472b6;
+  --brand-to: #db2777;
+  --brand-from-deep: #ec4899;
+  --brand-to-deep: #be185d;
+  --brand-shadow: 219 39 119;
+}
+.dark[data-brand="pink"] {
+  --primary: #f472b6;
+  --primary-foreground: #500724;
+  --accent: #500724;
+  --accent-foreground: #f9a8d4;
+  --ring: #f472b6;
+  --sidebar-primary: #f472b6;
+  --sidebar-primary-foreground: #500724;
+  --sidebar-accent: #500724;
+  --sidebar-accent-foreground: #f9a8d4;
+  --sidebar-ring: #f472b6;
 }
 
 @layer base {
@@ -179,6 +342,64 @@
 }
 
 @layer utilities {
+  /* ─── گرادیان‌های برند — با قالب انتخابی هماهنگ ─── */
+
+  /* لوگو، دکمه شناور و عناصر برند */
+  .brand-gradient {
+    background-image: linear-gradient(
+      to bottom left,
+      var(--brand-from),
+      var(--brand-to)
+    );
+  }
+
+  /* کارت قهرمان داشبورد (پررنگ‌تر) */
+  .brand-gradient-deep {
+    background-image: linear-gradient(
+      to bottom left,
+      var(--brand-from-deep),
+      var(--brand-to-deep)
+    );
+  }
+
+  /* گرادیان ملایم هدر کارت‌ها (RTL — از راست محو می‌شود) */
+  .brand-tint-gradient {
+    background-image: linear-gradient(
+      to left,
+      color-mix(in oklab, var(--brand-from) 16%, transparent),
+      color-mix(in oklab, var(--brand-from) 6%, transparent) 45%,
+      transparent
+    );
+  }
+  .dark .brand-tint-gradient {
+    background-image: linear-gradient(
+      to left,
+      color-mix(in oklab, var(--brand-from) 10%, transparent),
+      color-mix(in oklab, var(--brand-from) 4%, transparent) 45%,
+      transparent
+    );
+  }
+
+  /* هاله‌های تزئینی صفحه ورود */
+  .brand-halo-1 {
+    background: color-mix(in oklab, var(--brand-from) 26%, transparent);
+  }
+  .brand-halo-2 {
+    background: color-mix(in oklab, var(--brand-from) 18%, transparent);
+  }
+  .brand-halo-3 {
+    background: color-mix(in oklab, var(--brand-to) 20%, transparent);
+  }
+  .dark .brand-halo-1 {
+    background: color-mix(in oklab, var(--brand-from) 14%, transparent);
+  }
+  .dark .brand-halo-2 {
+    background: color-mix(in oklab, var(--brand-from) 10%, transparent);
+  }
+  .dark .brand-halo-3 {
+    background: color-mix(in oklab, var(--brand-to) 12%, transparent);
+  }
+
   /* Custom Persian scrollbar for long lists */
   .scrollbar-persian::-webkit-scrollbar {
     width: 8px;

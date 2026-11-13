@@ -70,18 +70,20 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { toPersianDigits } from "@/lib/accounting/jalali";
 import { AdminTelegramSection } from "./admin-telegram-section";
+import { AppearanceSettingsCard } from "./appearance-settings-card";
 
 export function AdminTab() {
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/60 dark:border-emerald-900/50 dark:bg-emerald-950/20 p-3 flex items-start gap-2">
-        <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-        <div className="text-sm text-emerald-800 dark:text-emerald-300">
+      <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 flex items-start gap-2 dark:border-primary/25 dark:bg-primary/10">
+        <ShieldCheck className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        <div className="text-sm text-foreground">
           پنل مدیریت سامانه — کاربران، دسترسی طرف‌حساب‌های مشترک، فعال/غیرفعال‌سازی
           و ربات تلگرام. هر کاربر در دفتر مستقل خودش ثبت می‌کند و دیگرانِ لینک‌شده
           رکوردهای او را می‌بینند.
         </div>
       </div>
+      <AppearanceSettingsCard />
       <UsersSection />
       <AdminTelegramSection />
       <AccessGrantsSection />
@@ -159,7 +161,7 @@ function UsersSection() {
                         {u.displayName}
                       </span>
                       {u.role === "admin" ? (
-                        <Badge className="h-5 bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        <Badge className="h-5 bg-primary/15 text-primary dark:bg-primary/20 dark:text-primary">
                           {ROLE_LABELS.admin}
                         </Badge>
                       ) : (

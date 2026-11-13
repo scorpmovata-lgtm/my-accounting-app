@@ -83,11 +83,14 @@ export interface Transaction {
 }
 
 // دسته‌بندی شخصی هر کاربر
+//   - counterpartyId === null → «عمومی»: برای همه طرف‌حساب‌ها قابل انتخاب
+//   - counterpartyId پر شده → «مخصوص»: فقط برای همان طرف‌حساب قابل انتخاب
 export interface Category {
   id: string;
   userId: string;
   name: string;
   createdAt: string;
+  counterpartyId?: string | null;
 }
 
 // کامنت روی ردیف تراکنش — دوطرفه (ثبت‌کننده و کاربرِ موضوعِ تراکنش)

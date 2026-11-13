@@ -309,9 +309,9 @@ export function OthersLedgerSection() {
   return (
     <Card className="overflow-hidden">
       {/* هدر با گرادیان بسیار ملایم سبز */}
-      <CardHeader className="border-b bg-gradient-to-l from-emerald-100/80 via-emerald-50/50 to-transparent pb-3 dark:from-emerald-900/30 dark:via-emerald-950/15">
+      <CardHeader className="border-b brand-tint-gradient pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600/10 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
             <Eye className="h-4 w-4" />
           </span>
           وضعیت تراکنش‌های من در حساب دیگران

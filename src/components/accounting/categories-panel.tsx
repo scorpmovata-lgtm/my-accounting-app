@@ -9,10 +9,10 @@
 // قراردادها:
 //   - رندر: سابسکرایب زنده‌ی استور با useAccountingStore((s) => s.xxx)
 //   - داخل asyncها: useAccountingStore.getState()
-//   - رنگ‌ها فقط emerald / rose / amber / muted (آبی و بنفش ممنوع)
+//   - رنگ برند از توکن primary (قالب انتخابی) + رنگ‌های معنایی rose/amber
 //   - ارقام فارسی با toPersianDigits
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Tags,
   Pencil,
@@ -23,6 +23,8 @@ import {
   AlertCircle,
   Contact as ContactIcon,
   UserCog,
+  Link2,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +47,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -60,18 +69,21 @@ import { useAccountingStore } from "@/store/accounting-store";
 import type { Category, Counterparty } from "@/lib/accounting/types";
 import { useToast } from "@/hooks/use-toast";
 import { toPersianDigits } from "@/lib/accounting/jalali";
+import { cn } from "@/lib/utils";
+import { AppearanceSettingsCard } from "./appearance-settings-card";
 
 export function PersonalSettingsPanel() {
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="rounded-lg border border-emerald-200/70 bg-emerald-50/60 dark:border-emerald-900/50 dark:bg-emerald-950/20 p-3 flex items-start gap-2">
-        <UserCog className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-        <div className="text-sm text-emerald-800 dark:text-emerald-300">
+      <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 flex items-start gap-2 dark:border-primary/25 dark:bg-primary/10">
+        <UserCog className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        <div className="text-sm text-foreground">
           تنظیمات من — دسته‌بندی‌ها و طرف‌حساب‌های شخصی خودتان را اینجا مدیریت
           کنید؛ این موارد فقط به دفتر شما تعلق دارند و برای بقیه کاربران
           نمایش داده نمی‌شوند.
         </div>
       </div>
+      <AppearanceSettingsCard />
       <MyCategoriesSection />
       <MyPrivateCounterpartiesSection />
     </div>
@@ -86,16 +98,21 @@ function MyCategoriesSection() {
   const currentUserId = useAccountingStore((s) => s.currentUserId);
   const categories = useAccountingStore((s) => s.categories);
   const transactions = useAccountingStore((s) => s.transactions);
+  const counterparties = useAccountingStore((s) => s.counterparties);
 
   const myCategories = currentUserId
     ? categories.filter((c) => c.userId === currentUserId)
     : [];
 
+  // گروه‌بندی برای شمارش: چند دسته عمومی، چند مخصوص
+  const generalCount = myCategories.filter((c) => !c.counterpartyId).length;
+  const specificCount = myCategories.length - generalCount;
+
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <Tags className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          <Tags className="h-4 w-4 text-primary" />
           دسته‌بندی‌های من
           <Badge variant="secondary" className="mr-1 h-5">
             {toPersianDigits(myCategories.length.toString())} دسته
@@ -103,8 +120,22 @@ function MyCategoriesSection() {
         </CardTitle>
         <CardDescription>
           دسته‌های شخصی شما برای طبقه‌بندی تراکنش‌ها؛ در فرم ثبت تراکنش قابل
-          انتخاب‌اند.
+          انتخاب‌اند. هر دسته می‌تواند «عمومی» (همه طرف‌حساب‌ها) یا «مخصوص»
+          (یک طرف‌حساب مشخص) باشد.
         </CardDescription>
+        {myCategories.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <Globe className="h-3 w-3" />
+              عمومی: {toPersianDigits(generalCount.toString())} دسته
+            </span>
+            <span className="text-muted-foreground/50">•</span>
+            <span className="inline-flex items-center gap-1">
+              <ContactIcon className="h-3 w-3" />
+              مخصوص: {toPersianDigits(specificCount.toString())} دسته
+            </span>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="p-0">
         <ScrollArea className="max-h-96 scrollbar-persian">
@@ -124,6 +155,10 @@ function MyCategoriesSection() {
                   (t) =>
                     t.categoryId === cat.id && t.userId === currentUserId
                 ).length;
+                // نام طرف‌حساب (اگر مخصوص است)
+                const cp = cat.counterpartyId
+                  ? counterparties.find((c) => c.id === cat.counterpartyId)
+                  : null;
                 return (
                   <li
                     key={cat.id}
@@ -132,10 +167,37 @@ function MyCategoriesSection() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium">{cat.name}</span>
+                        {cat.counterpartyId ? (
+                          <Badge
+                            variant="outline"
+                            className="h-5 text-[10px] gap-0.5 border-primary/40 text-primary"
+                          >
+                            <ContactIcon className="h-2.5 w-2.5" />
+                            {cp?.displayName ?? "طرف‌حساب حذف‌شده"}
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="h-5 text-[10px] gap-0.5 text-muted-foreground"
+                          >
+                            <Globe className="h-2.5 w-2.5" />
+                            عمومی
+                          </Badge>
+                        )}
                         <Badge variant="secondary" className="h-5 text-[10px]">
                           {toPersianDigits(txnCount.toString())} تراکنش
                         </Badge>
                       </div>
+                      {cat.counterpartyId && cp && (
+                        <div className="mt-0.5 text-[11px] text-muted-foreground">
+                          فقط در تراکنش‌های با «{cp.displayName}» قابل انتخاب
+                        </div>
+                      )}
+                      {cat.counterpartyId && !cp && (
+                        <div className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                          طرف‌حساب مرتبط حذف شده است؛ این دسته دیگر قابل استفاده نیست
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <EditCategoryDialog category={cat} />
@@ -160,22 +222,56 @@ function MyCategoriesSection() {
 
 function AddCategoryDialog() {
   const { toast } = useToast();
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const counterparties = useAccountingStore((s) => s.counterparties);
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  // scope: "general" → عمومی، "specific" → مخصوص یک طرف‌حساب
+  const [scope, setScope] = useState<"general" | "specific">("general");
+  const [cpId, setCpId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
   function reset() {
     setName("");
+    setScope("general");
+    setCpId("");
     setSubmitting(false);
   }
+
+  // طرف‌حساب‌های قابل استفاده برای ساخت دسته‌ی مخصوص
+  const usableCps = useMemo(() => {
+    if (!currentUserId) return [];
+    const state = useAccountingStore.getState();
+    return counterparties.filter((c) => {
+      if (c.archivedAt) return false;
+      if (c.linkedUserId === currentUserId) return false;
+      if (!c.isShared) return c.ownerUserId === currentUserId;
+      const me = state.users.find((u) => u.id === currentUserId);
+      if (me?.role === "admin") return true;
+      return state.grants.some(
+        (g) => g.userId === currentUserId && g.counterpartyId === c.id
+      );
+    });
+  }, [counterparties, currentUserId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const { currentUserId, addCategory } = useAccountingStore.getState();
     if (!currentUserId) return;
+    if (scope === "specific" && !cpId) {
+      toast({
+        title: "خطا",
+        description: "برای دسته‌ی مخصوص، انتخاب طرف‌حساب الزامی است.",
+        variant: "destructive",
+      });
+      return;
+    }
     setSubmitting(true);
-    const result = await addCategory(name);
+    const result = await addCategory(
+      name,
+      scope === "specific" ? cpId : null
+    );
     setSubmitting(false);
     if (!result.ok) {
       toast({
@@ -189,7 +285,10 @@ function AddCategoryDialog() {
     reset();
     toast({
       title: "دسته ایجاد شد",
-      description: `«${name.trim()}» به دسته‌های شخصی شما افزوده شد.`,
+      description:
+        scope === "specific"
+          ? `«${name.trim()}» به‌عنوان دسته‌ی مخصوص این طرف‌حساب افزوده شد.`
+          : `«${name.trim()}» به‌عنوان دسته‌ی عمومی (قابل استفاده با همه طرف‌حساب‌ها) افزوده شد.`,
     });
   }
 
@@ -210,12 +309,12 @@ function AddCategoryDialog() {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Tags className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            <Tags className="h-5 w-5 text-primary" />
             افزودن دسته شخصی
           </DialogTitle>
           <DialogDescription>
-            نام دسته را وارد کنید؛ این دسته فقط در دفتر شما قابل استفاده است
-            و در فرم ثبت تراکنش قابل انتخاب خواهد بود.
+            دسته را «عمومی» (قابل استفاده با همه طرف‌حساب‌ها) یا «مخصوص»
+            (فقط برای یک طرف‌حساب مشخص) بسازید.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -230,6 +329,94 @@ function AddCategoryDialog() {
               required
             />
           </div>
+
+          {/* انتخاب scope */}
+          <div className="space-y-2">
+            <Label>نوع دسته</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setScope("general")}
+                className={cn(
+                  "flex flex-col items-start gap-1 rounded-xl border p-3 text-right transition-all",
+                  scope === "general"
+                    ? "border-primary bg-accent/60 ring-2 ring-primary/25"
+                    : "border-border bg-card hover:border-primary/40 hover:bg-muted/40"
+                )}
+                aria-pressed={scope === "general"}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <Tags className="h-3.5 w-3.5 text-primary" />
+                  عمومی
+                </div>
+                <div className="text-[10px] leading-4 text-muted-foreground">
+                  قابل استفاده با همه طرف‌حساب‌ها
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setScope("specific")}
+                className={cn(
+                  "flex flex-col items-start gap-1 rounded-xl border p-3 text-right transition-all",
+                  scope === "specific"
+                    ? "border-primary bg-accent/60 ring-2 ring-primary/25"
+                    : "border-border bg-card hover:border-primary/40 hover:bg-muted/40"
+                )}
+                aria-pressed={scope === "specific"}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <ContactIcon className="h-3.5 w-3.5 text-primary" />
+                  مخصوص طرف‌حساب
+                </div>
+                <div className="text-[10px] leading-4 text-muted-foreground">
+                  فقط برای یک طرف‌حساب مشخص
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* اگر مخصوص انتخاب شد، طرف‌حساب را انتخاب کن */}
+          {scope === "specific" && (
+            <div className="space-y-2">
+              <Label>
+                طرف‌حساب <span className="text-rose-500" aria-hidden>*</span>
+              </Label>
+              <Select value={cpId} onValueChange={setCpId} disabled={submitting}>
+                <SelectTrigger className="h-11">
+                  <SelectValue
+                    placeholder={
+                      usableCps.length === 0
+                        ? "هیچ طرف‌حسابی در دسترس نیست"
+                        : "یک طرف‌حساب انتخاب کنید"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {usableCps.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.displayName}
+                      {c.linkedUsername && (
+                        <Badge
+                          variant="outline"
+                          className="h-4 gap-0.5 px-1 text-[9px] ms-1 border-emerald-300 text-emerald-700"
+                        >
+                          <Link2 className="h-2 w-2" />
+                          {c.linkedUsername}
+                        </Badge>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {usableCps.length === 0 && (
+                <div className="text-[11px] text-muted-foreground">
+                  هیچ طرف‌حسابی در دسترس شما نیست — ادمین باید دسترسی بدهد یا
+                  ابتدا یک طرف‌حساب شخصی بسازید.
+                </div>
+              )}
+            </div>
+          )}
+
           <DialogFooter className="flex-col gap-2 sm:flex-row">
             <Button
               type="button"
@@ -261,26 +448,72 @@ function AddCategoryDialog() {
 
 function EditCategoryDialog({ category }: { category: Category }) {
   const { toast } = useToast();
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const counterparties = useAccountingStore((s) => s.counterparties);
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(category.name);
+  // scope: "general" → عمومی، "specific" → مخصوص یک طرف‌حساب
+  const [scope, setScope] = useState<"general" | "specific">(
+    category.counterpartyId ? "specific" : "general"
+  );
+  const [cpId, setCpId] = useState<string>(category.counterpartyId ?? "");
   const [submitting, setSubmitting] = useState(false);
+
+  // طرف‌حساب‌های قابل استفاده برای scope مخصوص
+  const usableCps = useMemo(() => {
+    if (!currentUserId) return [];
+    const state = useAccountingStore.getState();
+    return counterparties.filter((c) => {
+      if (c.archivedAt) return false;
+      if (c.linkedUserId === currentUserId) return false;
+      if (!c.isShared) return c.ownerUserId === currentUserId;
+      const me = state.users.find((u) => u.id === currentUserId);
+      if (me?.role === "admin") return true;
+      return state.grants.some(
+        (g) => g.userId === currentUserId && g.counterpartyId === c.id
+      );
+    });
+  }, [counterparties, currentUserId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const { currentUserId, updateCategory } = useAccountingStore.getState();
+    if (!currentUserId) return;
     const trimmed = name.trim();
-    if (trimmed === category.name) {
+    if (!trimmed) {
+      toast({
+        title: "خطا",
+        description: "نام دسته الزامی است.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (scope === "specific" && !cpId) {
+      toast({
+        title: "خطا",
+        description: "برای دسته‌ی مخصوص، انتخاب طرف‌حساب الزامی است.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // تشخیص تغییرات
+    const nextCpId = scope === "specific" ? cpId : null;
+    const nameChanged = trimmed !== category.name;
+    const scopeChanged = nextCpId !== (category.counterpartyId ?? null);
+    if (!nameChanged && !scopeChanged) {
       toast({
         title: "تغییری اعمال نشد",
-        description: "نام دسته تغییر نکرده است.",
+        description: "هیچ فیلدی تغییر نکرده است.",
       });
       setOpen(false);
       return;
     }
-    const { currentUserId, renameCategory } = useAccountingStore.getState();
-    if (!currentUserId) return;
     setSubmitting(true);
-    const result = await renameCategory(category.id, trimmed);
+    const patch: { name?: string; counterpartyId?: string | null } = {};
+    if (nameChanged) patch.name = trimmed;
+    if (scopeChanged) patch.counterpartyId = nextCpId;
+    const result = await updateCategory(category.id, patch);
     setSubmitting(false);
     if (!result.ok) {
       toast({
@@ -293,8 +526,18 @@ function EditCategoryDialog({ category }: { category: Category }) {
     setOpen(false);
     toast({
       title: "به‌روزرسانی شد",
-      description: `نام دسته به «${trimmed}» تغییر یافت.`,
+      description:
+        scope === "specific"
+          ? `دسته «${trimmed}» به‌عنوان مخصوص این طرف‌حساب ذخیره شد.`
+          : `دسته «${trimmed}» به‌عنوان عمومی ذخیره شد.`,
     });
+  }
+
+  // وقتی دیالوگ باز می‌شود، مقادیر را از category بازخوانی کن
+  function syncFromCategory() {
+    setName(category.name);
+    setScope(category.counterpartyId ? "specific" : "general");
+    setCpId(category.counterpartyId ?? "");
   }
 
   return (
@@ -302,7 +545,7 @@ function EditCategoryDialog({ category }: { category: Category }) {
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
-        if (o) setName(category.name);
+        if (o) syncFromCategory();
       }}
     >
       <DialogTrigger asChild>
@@ -318,12 +561,13 @@ function EditCategoryDialog({ category }: { category: Category }) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Pencil className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            <Pencil className="h-5 w-5 text-primary" />
             ویرایش دسته «{category.name}»
           </DialogTitle>
           <DialogDescription>
-            نام جدید دسته را وارد کنید؛ تراکنش‌های ثبت‌شده با این دسته
-            دست‌نخورده باقی می‌مانند.
+            می‌توانید نام دسته یا نوع آن (عمومی/مخصوص) را تغییر دهید. اگر دسته
+            از «مخصوص» به «عمومی» تبدیل شود، با همه طرف‌حساب‌ها قابل استفاده
+            می‌شود و تراکنش‌های ثبت‌شده با آن دست‌نخورده باقی می‌مانند.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -337,6 +581,95 @@ function EditCategoryDialog({ category }: { category: Category }) {
               required
             />
           </div>
+
+          {/* انتخاب scope */}
+          <div className="space-y-2">
+            <Label>نوع دسته</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setScope("general")}
+                className={cn(
+                  "flex flex-col items-start gap-1 rounded-xl border p-3 text-right transition-all",
+                  scope === "general"
+                    ? "border-primary bg-accent/60 ring-2 ring-primary/25"
+                    : "border-border bg-card hover:border-primary/40 hover:bg-muted/40"
+                )}
+                aria-pressed={scope === "general"}
+                disabled={submitting}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <Globe className="h-3.5 w-3.5 text-primary" />
+                  عمومی
+                </div>
+                <div className="text-[10px] leading-4 text-muted-foreground">
+                  همه طرف‌حساب‌ها
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setScope("specific")}
+                className={cn(
+                  "flex flex-col items-start gap-1 rounded-xl border p-3 text-right transition-all",
+                  scope === "specific"
+                    ? "border-primary bg-accent/60 ring-2 ring-primary/25"
+                    : "border-border bg-card hover:border-primary/40 hover:bg-muted/40"
+                )}
+                aria-pressed={scope === "specific"}
+                disabled={submitting}
+              >
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <ContactIcon className="h-3.5 w-3.5 text-primary" />
+                  مخصوص طرف‌حساب
+                </div>
+                <div className="text-[10px] leading-4 text-muted-foreground">
+                  فقط یک طرف‌حساب
+                </div>
+              </button>
+            </div>
+          </div>
+
+          {/* اگر مخصوص انتخاب شد، طرف‌حساب را انتخاب کن */}
+          {scope === "specific" && (
+            <div className="space-y-2">
+              <Label>
+                طرف‌حساب <span className="text-rose-500" aria-hidden>*</span>
+              </Label>
+              <Select value={cpId} onValueChange={setCpId} disabled={submitting}>
+                <SelectTrigger className="h-11">
+                  <SelectValue
+                    placeholder={
+                      usableCps.length === 0
+                        ? "هیچ طرف‌حسابی در دسترس نیست"
+                        : "یک طرف‌حساب انتخاب کنید"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {usableCps.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.displayName}
+                      {c.linkedUsername && (
+                        <Badge
+                          variant="outline"
+                          className="h-4 gap-0.5 px-1 text-[9px] ms-1 border-emerald-300 text-emerald-700"
+                        >
+                          <Link2 className="h-2 w-2" />
+                          {c.linkedUsername}
+                        </Badge>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {usableCps.length === 0 && (
+                <div className="text-[11px] text-muted-foreground">
+                  هیچ طرف‌حسابی در دسترس شما نیست.
+                </div>
+              )}
+            </div>
+          )}
+
           <DialogFooter className="flex-col gap-2 sm:flex-row">
             <Button
               type="button"
@@ -457,7 +790,7 @@ function MyPrivateCounterpartiesSection() {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <ContactIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          <ContactIcon className="h-4 w-4 text-primary" />
           طرف‌حساب‌های شخصی من
           <Badge variant="secondary" className="mr-1 h-5">
             {toPersianDigits(myPrivateCps.length.toString())} مورد
@@ -578,7 +911,7 @@ function AddPrivateCpDialog() {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ContactIcon className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+            <ContactIcon className="h-5 w-5 text-primary" />
             افزودن طرف‌حساب شخصی
           </DialogTitle>
           <DialogDescription>

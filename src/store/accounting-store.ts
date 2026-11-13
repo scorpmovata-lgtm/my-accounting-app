@@ -45,8 +45,11 @@ import {
   fetchRealComments,
   fetchRealGrants,
   createTransactionReal,
+  updateTransactionReal,
+  deleteTransactionReal,
   createCategoryReal,
   renameCategoryReal,
+  updateCategoryReal,
   deleteCategoryReal,
   createPrivateCounterpartyReal,
   deletePrivateCounterpartyReal,
@@ -71,6 +74,17 @@ export interface AddTransactionInput {
   amount: number;
   currency: Currency;
   effectiveAt: string; // شمسی yyyy-mm-dd
+  description?: string;
+  categoryId?: string | null;
+}
+
+// ویرایش تراکنش — همه فیلدها اختیاری؛ فقط چیزی که داده شده تغییر می‌کند
+export interface UpdateTransactionInput {
+  kind?: TxnKind;
+  counterpartyId?: string;
+  amount?: number;
+  currency?: Currency;
+  effectiveAt?: string;
   description?: string;
   categoryId?: string | null;
 }
@@ -152,8 +166,16 @@ interface AccountingState {
   ) => Promise<Result>;
 
   // دسته‌بندی شخصی
-  addCategory: (name: string) => Promise<Result>;
+  //   counterpartyId: null → عمومی (همه طرف‌حساب‌ها) | string → مخصوص همان طرف‌حساب
+  addCategory: (
+    name: string,
+    counterpartyId?: string | null
+  ) => Promise<Result>;
   renameCategory: (id: string, name: string) => Promise<Result>;
+  updateCategory: (
+    id: string,
+    patch: { name?: string; counterpartyId?: string | null }
+  ) => Promise<Result>;
   deleteCategory: (id: string) => Promise<Result>;
 
   // طرف‌حساب شخصی
@@ -171,6 +193,15 @@ interface AccountingState {
     input: AddTransactionInput,
     actorId: string
   ) => Promise<Result & { transaction?: Transaction }>;
+  updateTransaction: (
+    id: string,
+    patch: UpdateTransactionInput,
+    actorId: string
+  ) => Promise<Result & { transaction?: Transaction }>;
+  deleteTransaction: (
+    id: string,
+    actorId: string
+  ) => Promise<Result>;
 
   // داخلی
   logAction: (
@@ -809,14 +840,23 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // دسته‌بندی شخصی
   // -------------------------------------------------------------------------
 
-  addCategory: async (name) => {
+  addCategory: async (name, counterpartyId = null) => {
     const me = get().currentUserId;
     if (!me) return { ok: false, error: "احراز هویت نشده." };
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, error: "نام دسته الزامی است." };
+    // اگر counterpartyId پر شده، باید قابل استفاده برای کاربر باشد
+    if (counterpartyId) {
+      const state = get();
+      const cp = state.counterparties.find((c) => c.id === counterpartyId);
+      if (!cp) return { ok: false, error: "طرف‌حساب یافت نشد." };
+      if (!canUseCounterparty(state, me, cp)) {
+        return { ok: false, error: "شما به این طرف‌حساب دسترسی ندارید." };
+      }
+    }
     if (get().realMode) {
       try {
-        const cat = await createCategoryReal(trimmed);
+        const cat = await createCategoryReal(trimmed, counterpartyId);
         set({ categories: [...get().categories, cat] });
         return { ok: true };
       } catch (e) {
@@ -824,6 +864,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       }
     }
     const state = get();
+    // نام تکراری برای همان scope ممنوع (یک کاربر نمی‌تواند دو دسته با
+    // نام تکراری داشته باشد — کلید یکتایی user_id+name است)
     if (
       state.categories.some(
         (c) => c.userId === me && c.name === trimmed
@@ -834,7 +876,13 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     set({
       categories: [
         ...state.categories,
-        { id: uid("cat"), userId: me, name: trimmed, createdAt: new Date().toISOString() },
+        {
+          id: uid("cat"),
+          userId: me,
+          name: trimmed,
+          createdAt: new Date().toISOString(),
+          counterpartyId,
+        },
       ],
     });
     return { ok: true };
@@ -859,6 +907,60 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     set({
       categories: get().categories.map((c) =>
         c.id === id ? { ...c, name: trimmed } : c
+      ),
+    });
+    return { ok: true };
+  },
+
+  updateCategory: async (id, patch) => {
+    const me = get().currentUserId;
+    if (!me) return { ok: false, error: "احراز هویت نشده." };
+    if (patch.name !== undefined) {
+      const trimmed = patch.name.trim();
+      if (!trimmed) return { ok: false, error: "نام دسته الزامی است." };
+      patch.name = trimmed;
+    }
+    // اگر scope به یک طرف‌حساب خاص تغییر می‌کند، اعتبارسنجی دسترسی
+    if (patch.counterpartyId !== undefined && patch.counterpartyId) {
+      const state = get();
+      const cp = state.counterparties.find((c) => c.id === patch.counterpartyId);
+      if (!cp) return { ok: false, error: "طرف‌حساب یافت نشد." };
+      if (!canUseCounterparty(state, me, cp)) {
+        return { ok: false, error: "شما به این طرف‌حساب دسترسی ندارید." };
+      }
+    }
+    if (get().realMode) {
+      try {
+        await updateCategoryReal(id, patch);
+        set({
+          categories: get().categories.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  ...(patch.name !== undefined ? { name: patch.name } : {}),
+                  ...(patch.counterpartyId !== undefined
+                    ? { counterpartyId: patch.counterpartyId }
+                    : {}),
+                }
+              : c
+          ),
+        });
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    set({
+      categories: get().categories.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              ...(patch.name !== undefined ? { name: patch.name } : {}),
+              ...(patch.counterpartyId !== undefined
+                ? { counterpartyId: patch.counterpartyId }
+                : {}),
+            }
+          : c
       ),
     });
     return { ok: true };
@@ -1035,13 +1137,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           "شما به این طرف حساب دسترسی ندارید. (ادمین باید دسترسی بدهد یا از طرف‌حساب‌های شخصی خودتان استفاده کنید)",
       };
     }
-    // دسته باید متعلق به خود کاربر باشد
+    // دسته باید متعلق به خود کاربر باشد و (در صورت مخصوص بودن) با
+    // طرف‌حساب این تراکنش منطبق باشد. دسته‌های عمومی با همه قابل استفاده‌اند.
     if (input.categoryId) {
       const cat = state.categories.find(
         (c) => c.id === input.categoryId && c.userId === actorId
       );
       if (!cat) {
         return { ok: false, error: "دسته‌بندی نامعتبر است." };
+      }
+      if (cat.counterpartyId && cat.counterpartyId !== input.counterpartyId) {
+        return {
+          ok: false,
+          error: "این دسته‌بندی مخصوص طرف‌حساب دیگری است و برای این تراکنش قابل استفاده نیست.",
+        };
       }
     }
 
@@ -1087,6 +1196,197 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     set({ auditLogs: [log, ...get().auditLogs] });
 
     return { ok: true, transaction: txn };
+  },
+
+  // -------------------------------------------------------------------------
+  // ویرایش تراکنش — فقط صاحب دفتر می‌تواند
+  // -------------------------------------------------------------------------
+  updateTransaction: async (id, patch, actorId) => {
+    // ---- real branch ----
+    if (get().realMode) {
+      try {
+        const res = await updateTransactionReal(id, patch);
+        await get().loadRealData();
+        return {
+          ok: true,
+          transaction: res.transaction ?? undefined,
+        };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const txn = state.transactions.find((t) => t.id === id);
+    if (!txn) return { ok: false, error: "تراکنش یافت نشد." };
+    if (txn.userId !== actorId) {
+      return {
+        ok: false,
+        error: "شما فقط می‌توانید تراکنش‌های خودتان را ویرایش کنید.",
+      };
+    }
+    // اعتبارسنجی فیلدهای داده‌شده
+    const v = validateTransactionInput({
+      kind: patch.kind ?? txn.kind,
+      amount: patch.amount ?? txn.amount,
+      counterpartyId: patch.counterpartyId ?? txn.counterpartyId,
+    });
+    if (!v.ok) return { ok: false, error: v.error };
+    // طرف‌حساب مجاز باشد (اگر تغییر کرده)
+    const nextCpId = patch.counterpartyId ?? txn.counterpartyId;
+    if (patch.counterpartyId && patch.counterpartyId !== txn.counterpartyId) {
+      const cp = state.counterparties.find((c) => c.id === patch.counterpartyId);
+      if (!cp) return { ok: false, error: "طرف حساب یافت نشد." };
+      if (!canUseCounterparty(state, actorId, cp)) {
+        return {
+          ok: false,
+          error: "شما به این طرف حساب دسترسی ندارید.",
+        };
+      }
+    }
+    // دسته باید متعلق به خود کاربر باشد (اگر تغییر کرده) و (در صورت مخصوص
+    // بودن) با طرف‌حسابِ این تراکنش (که ممکن است خودش هم تغییر کرده باشد)
+    // منطبق باشد. دسته‌های عمومی با همه قابل استفاده‌اند.
+    if (
+      patch.categoryId !== undefined &&
+      patch.categoryId !== null &&
+      patch.categoryId !== txn.categoryId
+    ) {
+      const cat = state.categories.find(
+        (c) => c.id === patch.categoryId && c.userId === actorId
+      );
+      if (!cat) return { ok: false, error: "دسته‌بندی نامعتبر است." };
+      if (cat.counterpartyId && cat.counterpartyId !== nextCpId) {
+        return {
+          ok: false,
+          error: "این دسته‌بندی مخصوص طرف‌حساب دیگری است و برای این تراکنش قابل استفاده نیست.",
+        };
+      }
+    }
+    // اگر طرف‌حساب تغییر کرده و دسته قبلی مخصوص طرف‌حساب قدیمی بوده،
+    // باید دسته را پاک کنیم (مگر اینکه کاربر صریحاً categoryId داده باشد)
+    if (
+      patch.counterpartyId &&
+      patch.counterpartyId !== txn.counterpartyId &&
+      txn.categoryId &&
+      patch.categoryId === undefined
+    ) {
+      const oldCat = state.categories.find((c) => c.id === txn.categoryId);
+      if (oldCat?.counterpartyId && oldCat.counterpartyId !== nextCpId) {
+        // دسته قبلی مخصوص طرف‌حساب قدیمی بوده → به‌صورت خودکار پاک می‌کنیم
+        patch.categoryId = null;
+      }
+    }
+
+    const cpNow = state.counterparties.find((c) => c.id === nextCpId);
+    const next: Transaction = {
+      ...txn,
+      kind: patch.kind ?? txn.kind,
+      counterpartyId: nextCpId,
+      amount: patch.amount ?? txn.amount,
+      currency: patch.currency ?? txn.currency,
+      effectiveAt: patch.effectiveAt ?? txn.effectiveAt,
+      description:
+        patch.description !== undefined
+          ? patch.description?.trim() || undefined
+          : txn.description,
+      categoryId:
+        patch.categoryId !== undefined ? patch.categoryId ?? null : txn.categoryId,
+    };
+    set({
+      transactions: state.transactions.map((t) => (t.id === id ? next : t)),
+    });
+
+    // گزارش ممیزی — چه فیلدهایی تغییر کردند
+    const actorName = findActorName(state.users, actorId);
+    const changes: string[] = [];
+    if (patch.kind && patch.kind !== txn.kind) changes.push("نوع");
+    if (
+      patch.counterpartyId &&
+      patch.counterpartyId !== txn.counterpartyId
+    )
+      changes.push("طرف حساب");
+    if (patch.amount !== undefined && patch.amount !== txn.amount)
+      changes.push("مبلغ");
+    if (
+      patch.effectiveAt &&
+      patch.effectiveAt !== txn.effectiveAt
+    )
+      changes.push("تاریخ");
+    if (
+      patch.description !== undefined &&
+      patch.description !== (txn.description ?? "")
+    )
+      changes.push("توضیحات");
+    if (
+      patch.categoryId !== undefined &&
+      patch.categoryId !== txn.categoryId
+    )
+      changes.push("دسته");
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "UPDATE_TXN",
+      entityType: "Transaction",
+      entityId: id,
+      result: "success",
+      details: `ویرایش تراکنش «${KIND_LABELS[txn.kind]} ${cpNow?.displayName ?? "—"}»${
+        changes.length ? " — تغییر: " + changes.join("، ") : ""
+      }`,
+      createdAt: new Date().toISOString(),
+    };
+    set({ auditLogs: [log, ...get().auditLogs] });
+
+    return { ok: true, transaction: next };
+  },
+
+  // -------------------------------------------------------------------------
+  // حذف تراکنش — فقط صاحب دفتر می‌تواند
+  // -------------------------------------------------------------------------
+  deleteTransaction: async (id, actorId) => {
+    // ---- real branch ----
+    if (get().realMode) {
+      try {
+        await deleteTransactionReal(id);
+        await get().loadRealData();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : "خطا" };
+      }
+    }
+    const state = get();
+    const txn = state.transactions.find((t) => t.id === id);
+    if (!txn) return { ok: false, error: "تراکنش یافت نشد." };
+    if (txn.userId !== actorId) {
+      return {
+        ok: false,
+        error: "شما فقط می‌توانید تراکنش‌های خودتان را حذف کنید.",
+      };
+    }
+    const actorName = findActorName(state.users, actorId);
+    const cp = state.counterparties.find((c) => c.id === txn.counterpartyId);
+    const now = new Date().toISOString();
+    const log: AuditLogEntry = {
+      id: uid("audit"),
+      actorId,
+      actorName,
+      action: "DELETE_TXN",
+      entityType: "Transaction",
+      entityId: id,
+      result: "success",
+      details: `حذف تراکنش «${KIND_LABELS[txn.kind]} ${cp?.displayName ?? "—"} — ${txn.amount.toLocaleString(
+        "en-US"
+      )} تومان در ${txn.effectiveAt}»`,
+      createdAt: now,
+    };
+    set({
+      // تراکنش حذف می‌شود
+      transactions: state.transactions.filter((t) => t.id !== id),
+      // کامنت‌های روی این تراکنش هم پاک می‌شوند (در حالت واقعی با cascade)
+      comments: state.comments.filter((c) => c.transactionId !== id),
+      auditLogs: [log, ...state.auditLogs],
+    });
+    return { ok: true };
   },
 
   // -------------------------------------------------------------------------

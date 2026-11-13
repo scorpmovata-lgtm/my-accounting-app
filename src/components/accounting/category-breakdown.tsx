@@ -83,7 +83,7 @@ export function CategoryBreakdown() {
     <Card className="rounded-2xl border-border/80 shadow-soft">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <PieChart className="h-4 w-4" />
           </span>
           جمع‌بندی دسته‌بندی‌ها

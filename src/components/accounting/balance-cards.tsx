@@ -85,8 +85,8 @@ export function BalanceCards() {
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-      {/* کارت قهرمان — وضعیت خالص (گرادیان سبز زمردی) */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-bl from-emerald-600 to-emerald-800 shadow-lift sm:col-span-2 xl:col-span-2">
+      {/* کارت قهرمان — وضعیت خالص (گرادیان برند انتخابی) */}
+      <div className="relative overflow-hidden rounded-2xl brand-gradient-deep shadow-lift sm:col-span-2 xl:col-span-2">
         {/* تزئینات شیشه‌ای ظریف */}
         <div
           className="pointer-events-none absolute -left-10 -top-14 h-40 w-40 rounded-full bg-white/10 blur-0"

@@ -1,6 +1,6 @@
 "use client";
 
-// App Shell «وصـد» — قاب Premium SaaS
+// App Shell «دفتر حساب کتاب» — قاب Premium SaaS
 // ---------------------------------------------------------------
 // دسکتاپ (lg+): سایدبار ثابت راست‌چین (قابل جمع‌شدن) + نوار بالا شیشه‌ای
 // موبایل: نوار بالای فشرده + منوی پایین با دکمه شناور «ثبت تراکنش»
@@ -307,14 +307,14 @@ export function AppShell() {
             collapsed && "justify-center px-0"
           )}
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white shadow-fab">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl brand-gradient text-white shadow-fab">
             <BookOpenText className="h-5 w-5" />
           </span>
           {!collapsed && (
             <div className="flex min-w-0 flex-col">
-              <span className="text-lg font-extrabold leading-6">وصـد</span>
+              <span className="truncate text-base font-extrabold leading-6">دفتر حساب کتاب</span>
               <span className="text-[10px] text-muted-foreground">
-                دفتر بدهی و طلب
+                بدهی و طلب با تقویم شمسی
               </span>
             </div>
           )}
@@ -404,10 +404,10 @@ export function AppShell() {
               <SheetContent side="right" className="w-72 p-0 flex flex-col">
                 <SheetHeader className="border-b p-4">
                   <SheetTitle className="flex items-center gap-2.5">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white shadow-fab">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl brand-gradient text-white shadow-fab">
                       <BookOpenText className="h-5 w-5" />
                     </span>
-                    <span className="text-lg font-extrabold">وصـد</span>
+                    <span className="text-base font-extrabold">دفتر حساب کتاب</span>
                   </SheetTitle>
                 </SheetHeader>
 
@@ -449,10 +449,10 @@ export function AppShell() {
 
             {/* لوگو موبایل */}
             <div className="flex items-center gap-2 lg:hidden">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg brand-gradient text-white">
                 <BookOpenText className="h-4 w-4" />
               </span>
-              <span className="text-base font-extrabold">وصـد</span>
+              <span className="text-base font-extrabold">دفتر حساب کتاب</span>
             </div>
 
             {/* عنوان صفحه + تاریخ — دسکتاپ */}
@@ -543,7 +543,7 @@ export function AppShell() {
                 <button
                   type="button"
                   onClick={() => setTxDialogOpen(true)}
-                  className="absolute -top-5 flex h-14 w-14 items-center justify-center rounded-full border-4 border-background bg-gradient-to-bl from-emerald-500 to-emerald-700 text-white shadow-fab transition-transform active:scale-95"
+                  className="absolute -top-5 flex h-14 w-14 items-center justify-center rounded-full border-4 border-background brand-gradient text-white shadow-fab transition-transform active:scale-95"
                   aria-label="افزودن تراکنش جدید"
                 >
                   <PlusCircle className="h-6 w-6" />
@@ -576,7 +576,7 @@ export function AppShell() {
             <div className="flex items-center gap-1.5">
               <BookOpenText className="h-3.5 w-3.5 text-primary" />
               <span>
-                وصـد — نسخه {toPersianDigits(APP_VERSION)} (دفتر مستقل + دید
+                دفتر حساب کتاب — نسخه {toPersianDigits(APP_VERSION)} (دفتر مستقل + دید
                 دوجانبه)
               </span>
             </div>

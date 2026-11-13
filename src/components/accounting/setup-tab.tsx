@@ -33,6 +33,7 @@ import {
 import {
   SCHEMA_SQL_V3,
   CREATE_TRANSACTION_FN_V3,
+  MANAGE_TRANSACTION_FN_V3,
   ADMIN_USERS_FN_V3,
   ADMIN_COUNTERPARTIES_FN_V3,
   DEPLOYMENT_STEPS_V3,
@@ -78,6 +79,16 @@ const ARTIFACTS: ArtifactBlock[] = [
     icon: FunctionSquare,
     description:
       "ثبت تراکنش دفتر مستقل با شش نوع عملیات + دسته‌بندی + اعتبارسنجی دسترسی طرف‌حساب.",
+  },
+  {
+    id: "manage-txn",
+    title: "۲-ب) Edge Function: manage-transaction (جدید در v3.۵)",
+    filename: "manage-transaction.ts",
+    language: "typescript",
+    code: MANAGE_TRANSACTION_FN_V3,
+    icon: FunctionSquare,
+    description:
+      "ویرایش (PUT) و حذف (DELETE) تراکنش با بررسی مالکیت (فقط صاحب دفتر) + اعتبارسنجی مجدد طرف‌حساب و دسته. Verify JWT خاموش بماند.",
   },
   {
     id: "admin-users",
@@ -191,15 +202,15 @@ export function SetupTab() {
   return (
     <div className="space-y-4 sm:space-y-6">
       {/* ┌ نشانهٔ نسخه — کارت اول تب راه‌اندازی ┐ */}
-      <Card className="border-emerald-300/80 dark:border-emerald-800/60 overflow-hidden">
-        <div className="h-1 bg-gradient-to-l from-emerald-500 via-emerald-400 to-emerald-300" />
+      <Card className="border-primary/40 overflow-hidden dark:border-primary/30">
+        <div className="h-1 brand-gradient" />
         <CardHeader className="pb-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600/10 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
               <GitBranch className="h-4.5 w-4.5" />
             </span>
             <CardTitle className="text-base">نسخهٔ فعلی مصنوعات دیپلوی</CardTitle>
-            <Badge className="bg-emerald-600 text-white h-6 px-2.5 text-xs font-bold" dir="ltr">
+            <Badge className="bg-primary text-primary-foreground h-6 px-2.5 text-xs font-bold" dir="ltr">
               v{toPersianDigits(APP_VERSION)}
             </Badge>
           </div>
@@ -213,14 +224,14 @@ export function SetupTab() {
           <div className="flex flex-wrap items-center gap-2">
             <Badge
               variant="outline"
-              className="h-7 gap-1.5 border-emerald-300/80 bg-emerald-50/70 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
+              className="h-7 gap-1.5 border-primary/40 bg-primary/10 text-primary dark:border-primary/30 dark:bg-primary/15 dark:text-primary"
             >
               <Clock className="h-3.5 w-3.5" />
               ساخت: {APP_BUILD_DATE}
             </Badge>
             <Badge
               variant="outline"
-              className="h-7 gap-1.5 border-emerald-300/80 bg-emerald-50/70 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
+              className="h-7 gap-1.5 border-primary/40 bg-primary/10 text-primary dark:border-primary/30 dark:bg-primary/15 dark:text-primary"
             >
               <Clock className="h-3.5 w-3.5" />
               ساعت: <span dir="ltr">{APP_BUILD_TIME}</span>
@@ -230,15 +241,15 @@ export function SetupTab() {
             </Badge>
           </div>
           {/* تغییرات این نسخه */}
-          <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20 p-3">
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+          <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 dark:border-primary/25 dark:bg-primary/10">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-primary">
               <Sparkles className="h-3.5 w-3.5" />
               تغییرات این نسخه:
             </div>
             <ul className="space-y-1.5">
               {APP_CHANGES.map((ch, i) => (
-                <li key={i} className="flex items-start gap-2 text-xs leading-5 text-emerald-900 dark:text-emerald-200">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                <li key={i} className="flex items-start gap-2 text-xs leading-5 text-foreground">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                   {ch}
                 </li>
               ))}
@@ -266,7 +277,7 @@ export function SetupTab() {
       </Card>
 
       {/* هشدار راه‌اندازی */}
-      <Card className="border-emerald-200/70 dark:border-emerald-900/50">
+      <Card className="border-primary/25 dark:border-primary/25">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Rocket className="h-5 w-5 text-primary" />
@@ -282,26 +293,26 @@ export function SetupTab() {
         <CardContent className="pt-0 space-y-3">
           {/* دانلود کد frontend */}
           <a
-            href="/my-accounting-app-v2.zip?v=18"
+            href="/my-accounting-app-v2.zip?v=21"
             download
-            className="flex items-center justify-between gap-3 rounded-lg border border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30 p-3 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 transition-colors"
+            className="flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/10 p-3 transition-colors hover:bg-primary/20 dark:border-primary/30 dark:bg-primary/15 dark:hover:bg-primary/25"
           >
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="h-9 w-9 shrink-0 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+              <div className="h-9 w-9 shrink-0 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
                 <Download className="h-4 w-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+                <div className="text-sm font-medium text-foreground">
                   دانلود کد frontend نسخه {toPersianDigits(APP_VERSION)}
                 </div>
-                <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                <div className="text-[11px] text-primary">
                   فایل ZIP — شامل پوشه src/ + supabase/ + پیکربندی + README
                 </div>
               </div>
             </div>
-            <Badge className="bg-emerald-600 text-white">my-accounting-app-v2.zip (v3)</Badge>
+            <Badge className="bg-primary text-primary-foreground">my-accounting-app-v2.zip (v3)</Badge>
           </a>
-          <div className="rounded-md bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/50 p-3 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
+          <div className="rounded-md bg-primary/5 border border-primary/25 p-3 text-xs text-foreground space-y-1 dark:bg-primary/10 dark:border-primary/25">
             <div className="flex items-center gap-1.5 font-medium">
               <Server className="h-3.5 w-3.5" />
               نکته احراز هویت با username
@@ -349,7 +360,7 @@ export function SetupTab() {
                     className="h-8"
                   >
                     {isCopied ? (
-                      <Check className="h-3.5 w-3.5 ml-1 text-emerald-600" />
+                      <Check className="h-3.5 w-3.5 ml-1 text-primary" />
                     ) : (
                       <Copy className="h-3.5 w-3.5 ml-1" />
                     )}

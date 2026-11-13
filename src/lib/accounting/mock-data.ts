@@ -162,15 +162,23 @@ export const seedCounterparties: Counterparty[] = [
 
 // ---------------------------------------------------------------------------
 // دسته‌بندی‌های شخصی
+//   counterpartyId === null/undefined → عمومی (همه طرف‌حساب‌ها)
+//   counterpartyId پر شده → مخصوص همان طرف‌حساب
 // ---------------------------------------------------------------------------
 
 export const seedCategories: Category[] = [
-  { id: "cat-a1", userId: "user-a", name: "وام", createdAt: isoAt(120) },
-  { id: "cat-a2", userId: "user-a", name: "قسط", createdAt: isoAt(120) },
-  { id: "cat-a3", userId: "user-a", name: "هدیه", createdAt: isoAt(119) },
-  { id: "cat-b1", userId: "user-b", name: "قرض", createdAt: isoAt(118) },
-  { id: "cat-b2", userId: "user-b", name: "خرید", createdAt: isoAt(118) },
-  { id: "cat-b3", userId: "user-b", name: "اجاره", createdAt: isoAt(118) },
+  // وحید: عمومی‌ها
+  { id: "cat-a1", userId: "user-a", name: "وام", createdAt: isoAt(120), counterpartyId: null },
+  { id: "cat-a2", userId: "user-a", name: "قسط", createdAt: isoAt(120), counterpartyId: null },
+  { id: "cat-a3", userId: "user-a", name: "هدیه", createdAt: isoAt(119), counterpartyId: null },
+  // وحید: مخصوص فائزه — کارهای مربوط به قرض‌های بین‌النوعی
+  { id: "cat-a4", userId: "user-a", name: "خرید مشترک", createdAt: isoAt(115), counterpartyId: "cp-faezeh" },
+  // فائزه: عمومی‌ها
+  { id: "cat-b1", userId: "user-b", name: "قرض", createdAt: isoAt(118), counterpartyId: null },
+  { id: "cat-b2", userId: "user-b", name: "خرید", createdAt: isoAt(118), counterpartyId: null },
+  { id: "cat-b3", userId: "user-b", name: "اجاره", createdAt: isoAt(118), counterpartyId: null },
+  // فائزه: مخصوص وحید
+  { id: "cat-b4", userId: "user-b", name: "تعاونی", createdAt: isoAt(116), counterpartyId: "cp-vahid" },
 ];
 
 // ---------------------------------------------------------------------------
