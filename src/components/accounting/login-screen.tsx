@@ -11,6 +11,7 @@ import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Card,
   CardContent,
@@ -32,6 +33,9 @@ export function LoginScreen() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  // مرا به خاطر بسپار — پیش‌فرض OFF تا در موبایل ورود خودکار نباشد
+  // فقط در حالت واقعی معنی دارد، ولی برای یکدستی همیشه نمایش داده می‌شود
+  const [rememberMe, setRememberMe] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -43,7 +47,7 @@ export function LoginScreen() {
     setSubmitting(true);
     // تأخیر کوتاه برای UX
     await new Promise((r) => setTimeout(r, 250));
-    const result = await login(u, p);
+    const result = await login(u, p, rememberMe);
     setSubmitting(false);
     if (result.ok) {
       toast({ title: "ورود موفق", description: "خوش آمدید!" });
@@ -183,6 +187,27 @@ export function LoginScreen() {
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* مرا به خاطر بسپار — فقط در حالت واقعی معنی دارد */}
+              {realMode && (
+                <label
+                  htmlFor="remember-me"
+                  className="flex items-center gap-2 cursor-pointer select-none"
+                >
+                  <Checkbox
+                    id="remember-me"
+                    checked={rememberMe}
+                    onCheckedChange={(v) => setRememberMe(v === true)}
+                    disabled={submitting}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    مرا به خاطر بسپار
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/70 mr-auto">
+                    (اگر فعال نباشد، با بستن مرورگر نشست شما منقضی می‌شود)
+                  </span>
+                </label>
               )}
 
               <Button

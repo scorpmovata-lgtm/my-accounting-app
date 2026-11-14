@@ -173,13 +173,40 @@ function mapGrant(r: any): AccessGrant {
 
 export async function signInWithUsername(
   username: string,
-  password: string
+  password: string,
+  rememberMe: boolean = true
 ): Promise<void> {
   const c = getClient();
   if (!c) throw new Error("حالت واقعی فعال نیست.");
   const email = username.trim().toLowerCase() + "@accounting.local";
   const { error } = await c.auth.signInWithPassword({ email, password });
   if (error) throw new Error(translateAuthError(error.message));
+  // ★ اگر کاربر «مرا به خاطر بسپار» را انتخاب نکرده، نشست را از
+  //   localStorage پاک می‌کنیم تا با بستن مرورگر/تب، نشست از بین برود.
+  //   در نشست فعلی (in-memory) کاربر لاگ‌این می‌ماند ولی بعد از reload
+  //   یا باز کردن مجدد برنامه، صفحه ورود نمایش داده می‌شود.
+  //   این رفتار برای جلوگیری از ورود خودکار در موبایل (که نشست‌ها
+  //   به‌شدت در localStorage حفظ می‌شوند) ضروری است.
+  if (!rememberMe) {
+    try {
+      // پاک کردن persisted session — auth.getSession هنوز در همان تب
+      //   نشست in-memory را برمی‌گرداند، ولی بعد از reload دیگر چیزی نیست.
+      const storageKey = "accounting_v2_auth";
+      if (typeof localStorage !== "undefined") {
+        // Supabase یک کلید با همین نام + یک کلید با prefix "sb-" می‌نویسد
+        localStorage.removeItem(storageKey);
+        // کلیدهای sb-... را هم پاک می‌کنیم
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && (k.startsWith("sb-") || k === storageKey)) {
+            localStorage.removeItem(k);
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export async function signOutReal(): Promise<void> {
@@ -464,6 +491,41 @@ export async function updateTransactionReal(
 
 export async function deleteTransactionReal(id: string): Promise<void> {
   await callEF("manage-transaction", "DELETE", undefined, { id });
+}
+
+// ---------------------------------------------------------------------------
+// بک‌آپ دستی (ادمین) — فراخوانی EF backup-email با JWT کاربر
+// اگر متغیرهای ایمیل تنظیم نشده، فقط داده JSON برمی‌گرداند.
+// ---------------------------------------------------------------------------
+
+export interface BackupResult {
+  ok: boolean;
+  emailSent: boolean;
+  recipient?: string;
+  filename?: string;
+  rowCounts?: Record<string, number>;
+  backup?: any;
+  message?: string;
+  error?: string;
+}
+
+export async function triggerBackupEmailReal(): Promise<BackupResult> {
+  const c = getClient();
+  if (!c) throw new Error("حالت واقعی فعال نیست.");
+  const { data: sessionData } = await c.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) throw new Error("احراز هویت نشده.");
+  const url = new URL(EF_BASE + "/backup-email");
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "خطای سرور (" + res.status + ")");
+  return data as BackupResult;
 }
 
 export async function adminCreateUserReal(input: {

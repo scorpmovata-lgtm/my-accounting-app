@@ -296,7 +296,7 @@ export function AppShell() {
       <aside
         className={cn(
           "sticky top-0 hidden h-dvh shrink-0 flex-col border-l bg-card transition-[width] duration-300 lg:flex",
-          collapsed ? "w-[76px]" : "w-64"
+          collapsed ? "w-[76px]" : "w-72"
         )}
         aria-label="منوی اصلی"
       >
@@ -312,7 +312,9 @@ export function AppShell() {
           </span>
           {!collapsed && (
             <div className="flex min-w-0 flex-col">
-              <span className="truncate text-base font-extrabold leading-6">دفتر حساب کتاب</span>
+              <span className="truncate text-base font-extrabold leading-6">
+                دفتر حساب کتاب ({currentUser.displayName})
+              </span>
               <span className="text-[10px] text-muted-foreground">
                 بدهی و طلب با تقویم شمسی
               </span>
@@ -407,7 +409,9 @@ export function AppShell() {
                     <span className="flex h-9 w-9 items-center justify-center rounded-xl brand-gradient text-white shadow-fab">
                       <BookOpenText className="h-5 w-5" />
                     </span>
-                    <span className="text-base font-extrabold">دفتر حساب کتاب</span>
+                    <span className="truncate text-base font-extrabold">
+                      دفتر حساب کتاب ({currentUser.displayName})
+                    </span>
                   </SheetTitle>
                 </SheetHeader>
 
@@ -448,11 +452,13 @@ export function AppShell() {
             </Sheet>
 
             {/* لوگو موبایل */}
-            <div className="flex items-center gap-2 lg:hidden">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg brand-gradient text-white">
+            <div className="flex min-w-0 items-center gap-2 lg:hidden">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg brand-gradient text-white">
                 <BookOpenText className="h-4 w-4" />
               </span>
-              <span className="text-base font-extrabold">دفتر حساب کتاب</span>
+              <span className="truncate text-base font-extrabold">
+                دفتر حساب کتاب ({currentUser.displayName})
+              </span>
             </div>
 
             {/* عنوان صفحه + تاریخ — دسکتاپ */}

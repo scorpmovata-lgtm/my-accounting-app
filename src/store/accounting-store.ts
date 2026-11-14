@@ -124,7 +124,7 @@ interface AccountingState {
   authStatus: "loading" | "anonymous" | "authenticated";
   currentUserId: string | null;
   authError: string | null;
-  login: (username: string, password: string) => Promise<Result>;
+  login: (username: string, password: string, rememberMe?: boolean) => Promise<Result>;
   logout: () => Promise<void>;
   clearAuthError: () => void;
   initRealSession: () => Promise<void>;
@@ -139,7 +139,7 @@ interface AccountingState {
     >,
     actorId: string
   ) => Promise<Result>;
-  deleteUser: (id: string, actorId: string) => Promise<void>;
+  deleteUser: (id: string, actorId: string) => Promise<Result>;
 
   // مدیریت طرف حساب‌های مشترک (ادمین)
   addCounterparty: (
@@ -303,13 +303,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // احراز هویت
   // -------------------------------------------------------------------------
 
-  login: async (username, password) => {
+  login: async (username, password, rememberMe = false) => {
     const usernameNorm = normalizeInput(username).toLowerCase();
     const passwordNorm = normalizeInput(password);
     // ---- حالت واقعی ----
     if (get().realMode) {
       try {
-        await signInWithUsername(usernameNorm, passwordNorm);
+        // پیش‌فرض: rememberMe = false → نشست در localStorage ذخیره نمی‌شود
+        // و با بستن مرورگر از بین می‌رود (جلوگیری از ورود خودکار در موبایل)
+        await signInWithUsername(usernameNorm, passwordNorm, rememberMe);
         const u = await getCurrentRealUser();
         if (!u) {
           const msg = "پروفایل کاربر یافت نشد.";
@@ -545,14 +547,17 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       try {
         await adminDeleteUserReal(id);
         await get().loadRealData();
+        return { ok: true };
       } catch (e) {
-        /* بی‌صدا */
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : "خطا در حذف کاربر",
+        };
       }
-      return;
     }
     const state = get();
     const user = state.users.find((u) => u.id === id);
-    if (!user) return;
+    if (!user) return { ok: false, error: "کاربر یافت نشد." };
     const now = new Date().toISOString();
     const actorName = findActorName(state.users, actorId);
     const log: AuditLogEntry = {
@@ -567,9 +572,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       createdAt: now,
     };
     set({
+      // حذف کاربر از فهرست
       users: state.users.filter((u) => u.id !== id),
+      // تراکنش‌های این کاربر: چون در حالت موک FK نداریم، فقط از حالت
+      //   currentUserId خارج می‌شوند ولی رکوردهایشان باقی می‌ماند
+      //   (در حالت واقعی، EF این‌ها را به actor منتقل می‌کند)
+      // counterparties که linked_user_id به این کاربر داشته → null + archive
+      counterparties: state.counterparties.map((c) =>
+        c.linkedUserId === id
+          ? { ...c, linkedUserId: null, linkedUsername: null, archivedAt: now }
+          : c
+      ),
       auditLogs: [log, ...state.auditLogs],
     });
+    return { ok: true };
   },
 
   // -------------------------------------------------------------------------

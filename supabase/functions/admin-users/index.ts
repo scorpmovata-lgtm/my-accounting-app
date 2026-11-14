@@ -164,8 +164,51 @@ Deno.serve(async (req) => {
     const id = url.searchParams.get("id");
     if (!id) return json({ error: "id الزامی" }, 400);
     if (id === actor.id) return json({ error: "نمی‌توانید خودتان را حذف کنید" }, 400);
+
+    // ★ قبل از حذف auth.users، ستون‌های RESTRICT-FK را null کنیم تا
+    //   Postgres FK violation ندهد و بتوانیم کاربر را حذف کنیم.
+    //   تراکنش‌ها و طرف‌حساب‌هایی که این کاربر ساخته را به actor فعلی
+    //   (ادمین) منتقل می‌کنیم تا تاریخچه حفظ شود. گرنت‌هایی که این
+    //   کاربر داده را هم null می‌کنیم. گزارش‌های ممیزی را به actor
+    //   منتقل می‌کنیم (نام display_name در audit_logs به‌عنوان متن
+    //   ذخیره شده و حفظ می‌شود).
+    try {
+      // تراکنش‌های ثبت‌شده توسط این کاربر → انتقال به actor
+      await admin
+        .from("transactions")
+        .update({ created_by: actor.id })
+        .eq("created_by", id);
+      // طرف‌حساب‌های مشترک ساخته‌شده توسط این کاربر → انتقال به actor
+      await admin
+        .from("counterparties")
+        .update({ created_by: actor.id })
+        .eq("created_by", id);
+      // طرف‌حساب لینک‌شده به این کاربر (نماینده خودش) → آرشیو
+      //   (نمی‌توانیم حذف کنیم چون ممکن است تراکنشی به آن وابسته باشد)
+      await admin
+        .from("counterparties")
+        .update({ linked_user_id: null, archived_at: new Date().toISOString() })
+        .eq("linked_user_id", id);
+      // گرنت‌های داده‌شده توسط این کاربر → null
+      await admin
+        .from("counterparty_access")
+        .update({ granted_by: null })
+        .eq("granted_by", id);
+      // گزارش‌های ممیزی این کاربر → انتقال به actor (نام متن حفظ می‌شود)
+      await admin
+        .from("audit_logs")
+        .update({ actor_id: actor.id })
+        .eq("actor_id", id);
+    } catch (e) {
+      return json({ error: "خطا در پاک‌سازی وابستگی‌ها: " + String(e) }, 500);
+    }
+
+    // حالا auth.users را حذف می‌کنیم — CASCADE خودکار user_profiles،
+    // counterparty_access (به‌عنوان user_id)، categories و transaction_comments
+    // را پاک می‌کند.
     const { error } = await admin.auth.admin.deleteUser(id);
     if (error) return json({ error: error.message }, 500);
+
     await admin.from("audit_logs").insert({
       actor_id: actor.id,
       actor_name: await actorName(admin, actor.id),
@@ -173,7 +216,7 @@ Deno.serve(async (req) => {
       entity_type: "User",
       entity_id: id,
       result: "success",
-      details: "حذف کاربر",
+      details: "حذف کاربر — انتقال تراکنش‌ها و طرف‌حساب‌ها به ادمین، آرشیو طرف‌حساب لینک‌شده",
     });
     return json({ ok: true });
   }

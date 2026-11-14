@@ -36,6 +36,7 @@ import {
   MANAGE_TRANSACTION_FN_V3,
   ADMIN_USERS_FN_V3,
   ADMIN_COUNTERPARTIES_FN_V3,
+  BACKUP_EMAIL_FN_V3,
   DEPLOYMENT_STEPS_V3,
 } from "@/lib/deployment/v3-artifacts";
 import { TELEGRAM_BOT_FN_V3 } from "@/lib/deployment/v3-artifacts";
@@ -119,6 +120,16 @@ const ARTIFACTS: ArtifactBlock[] = [
     icon: Send,
     description:
       "مانده بر پایه شش نوع عملیات + نمایش دسته + رد کاربران غیرفعال. (Verify JWT خاموش بماند)",
+  },
+  {
+    id: "backup-email",
+    title: "۶) Edge Function: backup-email (جدید در v3.۷)",
+    filename: "backup-email.ts",
+    language: "typescript",
+    code: BACKUP_EMAIL_FN_V3,
+    icon: Database,
+    description:
+      "بک‌آپ دستی (دانلود JSON) و بک‌آپ خودکار روزانه به ایمیل (با Resend + pg_cron). Verify JWT خاموش.",
   },
   {
     id: "schema-v2",
@@ -293,7 +304,7 @@ export function SetupTab() {
         <CardContent className="pt-0 space-y-3">
           {/* دانلود کد frontend */}
           <a
-            href="/my-accounting-app-v2.zip?v=21"
+            href="/my-accounting-app-v2.zip?v=22"
             download
             className="flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/10 p-3 transition-colors hover:bg-primary/20 dark:border-primary/30 dark:bg-primary/15 dark:hover:bg-primary/25"
           >

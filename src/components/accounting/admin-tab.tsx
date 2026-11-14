@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ShieldCheck,
   Users,
@@ -19,7 +19,17 @@ import {
   Lock,
   Share2,
   X,
+  Database,
+  Download,
+  Mail,
+  FileSpreadsheet,
+  Upload,
+  Calendar,
+  Clock,
+  Tag,
+  Filter,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,13 +74,18 @@ import { useAccountingStore } from "@/store/accounting-store";
 import {
   ROLE_LABELS,
   SCOPE_SHORT,
+  KIND_LABELS,
+  KIND_META,
   type UserScope,
   type UserRole,
+  type Transaction,
 } from "@/lib/accounting/types";
 import { useToast } from "@/hooks/use-toast";
 import { toPersianDigits } from "@/lib/accounting/jalali";
+import { APP_VERSION } from "@/lib/version";
 import { AdminTelegramSection } from "./admin-telegram-section";
 import { AppearanceSettingsCard } from "./appearance-settings-card";
+import { triggerBackupEmailReal } from "@/lib/supabase/real";
 
 export function AdminTab() {
   return (
@@ -88,6 +103,8 @@ export function AdminTab() {
       <AdminTelegramSection />
       <AccessGrantsSection />
       <CounterpartiesSection />
+      <BackupSection />
+      <ExcelImportExportSection />
     </div>
   );
 }
@@ -611,11 +628,19 @@ function DeleteUserDialog({
 
   async function handleDelete() {
     if (!currentUserId) return;
-    await deleteUser(user.id, currentUserId);
+    const result = await deleteUser(user.id, currentUserId);
+    if (!result.ok) {
+      toast({
+        title: "حذف ناموفق",
+        description: result.error ?? "خطای ناشناخته",
+        variant: "destructive",
+      });
+      return; // دیالوگ باز می‌ماند تا کاربر خطا را بخواند
+    }
     setOpen(false);
     toast({
       title: "کاربر حذف شد",
-      description: `«${user.displayName}» حذف شد.`,
+      description: `«${user.displayName}» حذف شد — تراکنش‌ها و طرف‌حساب‌های ایشان به شما منتقل شد.`,
       variant: "destructive",
     });
   }
@@ -1277,6 +1302,679 @@ function AccessGrantsSection() {
             )}
           </ul>
         </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===========================================================================
+// بخش بک‌آپ — دستی (دانلود JSON) + خودکار (ارسال به ایمیل)
+// ===========================================================================
+
+function BackupSection() {
+  const { toast } = useToast();
+  const realMode = useAccountingStore((s) => s.realMode);
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const users = useAccountingStore((s) => s.users);
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const transactions = useAccountingStore((s) => s.transactions);
+  const categories = useAccountingStore((s) => s.categories);
+  const comments = useAccountingStore((s) => s.comments);
+  const grants = useAccountingStore((s) => s.grants);
+  const auditLogs = useAccountingStore((s) => s.auditLogs);
+
+  const [emailSending, setEmailSending] = useState(false);
+
+  // بک‌آپ دستی — دانلود JSON با متاداده
+  function handleDownloadBackup() {
+    if (!currentUserId) return;
+    const now = new Date();
+    const tehranStr = now.toLocaleString("en-US", { timeZone: "Asia/Tehran" });
+    const backup = {
+      meta: {
+        version: APP_VERSION,
+        generatedAt: now.toISOString(),
+        generatedAtTehran: tehranStr,
+        generatedBy: currentUserId,
+        mode: realMode ? "production" : "sandbox-mock",
+        rowCounts: {
+          users: users.length,
+          counterparties: counterparties.length,
+          transactions: transactions.length,
+          categories: categories.length,
+          comments: comments.length,
+          grants: grants.length,
+          auditLogs: auditLogs.length,
+        },
+      },
+      users: realMode ? users.map(({ password, ...rest }) => rest) : users,
+      counterparties,
+      transactions,
+      categories,
+      comments,
+      grants,
+      auditLogs,
+    };
+    const json = JSON.stringify(backup, null, 2);
+    const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `backup-dafter-${tehranStr.replace(/[/ :,]/g, "-")}-v${APP_VERSION}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({
+      title: "بک‌آپ دانلود شد",
+      description: `فایل JSON شامل ${toPersianDigits(transactions.length.toString())} تراکنش و ${toPersianDigits(users.length.toString())} کاربر دانلود شد.`,
+    });
+  }
+
+  // بک‌آپ به ایمیل (فقط حالت واقعی) — فراخوانی EF backup-email
+  async function handleEmailBackup() {
+    if (!realMode) {
+      toast({
+        title: "غیرفعال در حالت موک",
+        description: "بک‌آپ ایمیل فقط در حالت تولید (Supabase واقعی) کار می‌کند.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setEmailSending(true);
+    try {
+      const res = await triggerBackupEmailReal();
+      if (res.emailSent) {
+        toast({
+          title: "بک‌آپ ارسال شد",
+          description: `فایل بک‌آپ به ${res.recipient} ارسال شد — ${toPersianDigits(String(res.rowCounts?.transactions ?? 0))} تراکنش.`,
+        });
+      } else {
+        toast({
+          title: "بک‌آپ ساخته شد ولی ایمیل ارسال نشد",
+          description: res.message ?? "متغیرهای ایمیل (RESEND_API_KEY و…) تنظیم نشده‌اند.",
+          variant: "destructive",
+        });
+      }
+    } catch (e) {
+      toast({
+        title: "خطا در بک‌آپ ایمیل",
+        description: e instanceof Error ? e.message : "خطای ناشناخته",
+        variant: "destructive",
+      });
+    }
+    setEmailSending(false);
+  }
+
+  const totalRows =
+    users.length +
+    counterparties.length +
+    transactions.length +
+    categories.length +
+    comments.length +
+    grants.length +
+    auditLogs.length;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Database className="h-4 w-4" />
+          </span>
+          بک‌آپ و بازیابی
+          <Badge variant="secondary" className="ms-1 h-5">
+            {toPersianDigits(totalRows.toString())} ردیف
+          </Badge>
+        </CardTitle>
+        <CardDescription>
+          بک‌آپ دستی به‌صورت فایل JSON با تاریخ، ساعت دقیقه و نسخه سامانه — یا
+          بک‌آپ خودکار روزانه به ایمیل.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* خلاصه آماری */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-lg font-bold text-primary">
+              {toPersianDigits(users.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">کاربر</div>
+          </div>
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-lg font-bold text-primary">
+              {toPersianDigits(transactions.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">تراکنش</div>
+          </div>
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-lg font-bold text-primary">
+              {toPersianDigits(counterparties.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">طرف‌حساب</div>
+          </div>
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-lg font-bold text-primary">
+              {toPersianDigits(auditLogs.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">گزارش ممیزی</div>
+          </div>
+        </div>
+
+        {/* دکمه‌های بک‌آپ دستی و ایمیل */}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Button
+            onClick={handleDownloadBackup}
+            className="h-11"
+            disabled={!currentUserId}
+          >
+            <Download className="h-4 w-4 ml-2" />
+            دانلود بک‌آپ JSON
+          </Button>
+          <Button
+            onClick={handleEmailBackup}
+            variant="outline"
+            className="h-11"
+            disabled={emailSending || !realMode}
+            title={!realMode ? "فقط در حالت تولید (Supabase واقعی) فعال است" : undefined}
+          >
+            {emailSending ? (
+              <Loader2 className="h-4 w-4 ml-2 animate-spin" />
+            ) : (
+              <Mail className="h-4 w-4 ml-2" />
+            )}
+            ارسال بک‌آپ به ایمیل
+          </Button>
+        </div>
+
+        {/* اطلاعات بک‌آپ خودکار */}
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-xs leading-relaxed">
+          <div className="flex items-center gap-1.5 font-semibold text-primary mb-1.5">
+            <Clock className="h-3.5 w-3.5" />
+            بک‌آپ خودکار روزانه
+          </div>
+          <p className="text-muted-foreground">
+            برای فعال‌سازی بک‌آپ خودکار روزانه به ایمیل، در Supabase:
+          </p>
+          <ol className="mt-2 space-y-1 text-muted-foreground list-decimal pe-4">
+            <li>
+              حساب رایگان <span dir="ltr" className="font-mono">resend.com</span> بسازید و API Key بگیرید
+            </li>
+            <li>
+              در Supabase Project Settings → Edge Functions Secrets این متغیرها را set کنید:
+              <div dir="ltr" className="mt-1 rounded-md bg-muted p-2 font-mono text-[10px]">
+                RESEND_API_KEY=re_xxxx<br />
+                BACKUP_EMAIL_FROM=backup@yourdomain.com<br />
+                BACKUP_EMAIL_TO=you@example.com<br />
+                BACKUP_WEBHOOK_SECRET=random_secret_string
+              </div>
+            </li>
+            <li>
+              Edge Function <span dir="ltr" className="font-mono">backup-email</span> را deploy کنید
+            </li>
+            <li>
+              در SQL Editor این افزونه‌ها و زمان‌بندی را اجرا کنید (هر روز ۰۲:۰۰ به وقت تهران):
+              <div dir="ltr" className="mt-1 rounded-md bg-muted p-2 font-mono text-[10px] overflow-x-auto">
+                create extension if not exists pg_cron;<br />
+                create extension if not exists pg_net;<br />
+                select cron.schedule(<br />
+                &nbsp;&nbsp;'daily-backup-email',<br />
+                &nbsp;&nbsp;'30 22 * * *',<br />
+                &nbsp;&nbsp;$$select net.http_post(<br />
+                &nbsp;&nbsp;&nbsp;&nbsp;url := 'https://YOUR_PROJECT.functions.supabase.co/backup-email',<br />
+                &nbsp;&nbsp;&nbsp;&nbsp;headers := jsonb_build_object('Content-Type','application/json','X-Backup-Secret','YOUR_SECRET'),<br />
+                &nbsp;&nbsp;&nbsp;&nbsp;body := jsonb_build_object('scheduled',true)::text<br />
+                &nbsp;&nbsp;)$$<br />
+                );
+              </div>
+            </li>
+          </ol>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ===========================================================================
+// بخش اکسل — بارگذاری (template + import) و خروجی (export)
+// ===========================================================================
+
+function ExcelImportExportSection() {
+  const { toast } = useToast();
+  const currentUserId = useAccountingStore((s) => s.currentUserId);
+  const users = useAccountingStore((s) => s.users);
+  const counterparties = useAccountingStore((s) => s.counterparties);
+  const transactions = useAccountingStore((s) => s.transactions);
+  const categories = useAccountingStore((s) => s.categories);
+  const addTransaction = useAccountingStore((s) => s.addTransaction);
+
+  // شیت راهنمای فرمت اکسل برای ورود
+  function handleDownloadTemplate() {
+    const wb = XLSX.utils.book_new();
+    // شیت ۱: راهنما
+    const guideRows = [
+      ["ستون", "نوع", "الزامی؟", "توضیحات"],
+      ["نوع عملیات (kind)", "متن", "بله", "یکی از: opening_claim, opening_debt, claim, debt, paid_to, received_from"],
+      ["نام طرف حساب", "متن", "بله", "نام طرف حساب (باید در دفتر شما موجود باشد)"],
+      ["مبلغ (تومان)", "عدد", "بله", "عدد صحیح مثبت — مثلاً 1000000"],
+      ["واحد", "متن", "خیر", "IRT (تومان) یا IRR (ریال) — پیش‌فرض IRT"],
+      ["تاریخ شمسی", "متن", "بله", "فرمت yyyy-mm-dd — مثلاً 1405-08-20"],
+      ["توضیحات", "متن", "خیر", "مثلاً: پرداخت قسط اول"],
+      ["نام دسته", "متن", "خیر", "نام دسته شخصی شما — اگر خالی باشد، بدون دسته ثبت می‌شود"],
+    ];
+    const ws1 = XLSX.utils.aoa_to_sheet(guideRows);
+    ws1["!cols"] = [{ wch: 22 }, { wch: 10 }, { wch: 10 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(wb, ws1, "راهنما");
+
+    // شیت ۲: نمونه با یک ردیف خالی
+    const sampleRows = [
+      ["نوع عملیات (kind)", "نام طرف حساب", "مبلغ (تومان)", "واحد", "تاریخ شمسی", "توضیحات", "نام دسته"],
+      ["paid_to", "فائزه", 1000000, "IRT", "1405-08-20", "پرداخت قسط اول", "قسط"],
+      ["claim", "رضا کریمی", 500000, "IRT", "1405-08-21", "", ""],
+    ];
+    const ws2 = XLSX.utils.aoa_to_sheet(sampleRows);
+    ws2["!cols"] = [{ wch: 18 }, { wch: 20 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 30 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws2, "ورود تراکنش‌ها");
+
+    XLSX.writeFile(wb, `template-dafter-v${APP_VERSION}.xlsx`);
+    toast({
+      title: "فایل الگو دانلود شد",
+      description: "شیت «ورود تراکنش‌ها» را با داده‌های خود پر کنید و دوباره بارگذاری کنید.",
+    });
+  }
+
+  // خروجی اکسل همه تراکنش‌ها — گروه‌بندی به ترتیب: کاربر → طرف حساب → دسته
+  function handleExportTransactions() {
+    if (transactions.length === 0) {
+      toast({
+        title: "تراکنشی نیست",
+        description: "هنوز تراکنشی ثبت نشده است.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    // شیت ۱: خلاصه کلی
+    const summaryRows: any[][] = [
+      ["خلاصه خروجی تراکنش‌ها", ""],
+      ["نسخه سامانه", APP_VERSION],
+      ["زمان تولید", new Date().toLocaleString("en-US", { timeZone: "Asia/Tehran" })],
+      ["تعداد کل تراکنش‌ها", transactions.length],
+      ["تعداد کاربران", users.length],
+      ["تعداد طرف‌حساب‌ها", counterparties.length],
+      ["تعداد دسته‌ها", categories.length],
+      ["", ""],
+      ["توزیع بر اساس نوع عملیات", ""],
+    ];
+    const kindCounts: Record<string, number> = {};
+    for (const t of transactions) {
+      kindCounts[t.kind] = (kindCounts[t.kind] ?? 0) + 1;
+    }
+    for (const k of Object.keys(kindCounts)) {
+      summaryRows.push([KIND_LABELS[k as keyof typeof KIND_LABELS] ?? k, kindCounts[k]]);
+    }
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    wsSummary["!cols"] = [{ wch: 28 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, "خلاصه");
+
+    // مرتب‌سازی: کاربر → طرف حساب → دسته → تاریخ (نزولی)
+    const sorted = [...transactions].sort((a, b) => {
+      const uA = users.find((u) => u.id === a.userId)?.displayName ?? "—";
+      const uB = users.find((u) => u.id === b.userId)?.displayName ?? "—";
+      if (uA !== uB) return uA.localeCompare(uB, "fa");
+      const cA = counterparties.find((c) => c.id === a.counterpartyId)?.displayName ?? "—";
+      const cB = counterparties.find((c) => c.id === b.counterpartyId)?.displayName ?? "—";
+      if (cA !== cB) return cA.localeCompare(cB, "fa");
+      const catA = categories.find((c) => c.id === a.categoryId)?.name ?? "—";
+      const catB = categories.find((c) => c.id === b.categoryId)?.name ?? "—";
+      if (catA !== catB) return catA.localeCompare(catB, "fa");
+      return b.effectiveAt.localeCompare(a.effectiveAt);
+    });
+
+    // شیت ۲: همه تراکنش‌ها (flat) — برای فیلتر Pivot در اکسل
+    const flatRows: any[][] = [[
+      "کاربر", "نام کاربری کاربر", "نوع عملیات", "برچسب نوع", "طرف حساب",
+      "نوع طرف حساب", "لینک به کاربر", "مبلغ (تومان)", "واحد", "تاریخ شمسی",
+      "زمان ثبت", "دسته", "نوع دسته (عمومی/مخصوص)", "توضیحات", "وضعیت",
+    ]];
+    for (const t of sorted) {
+      const u = users.find((x) => x.id === t.userId);
+      const cp = counterparties.find((x) => x.id === t.counterpartyId);
+      const cat = categories.find((x) => x.id === t.categoryId);
+      const linkedU = cp?.linkedUserId ? users.find((x) => x.id === cp.linkedUserId) : null;
+      flatRows.push([
+        u?.displayName ?? "—",
+        u?.username ?? "—",
+        t.kind,
+        KIND_LABELS[t.kind] ?? t.kind,
+        cp?.displayName ?? "—",
+        cp?.isShared ? "مشترک" : "شخصی",
+        linkedU?.username ?? "",
+        t.amount,
+        t.currency,
+        t.effectiveAt,
+        t.createdAt,
+        cat?.name ?? "",
+        cat ? (cat.counterpartyId ? "مخصوص" : "عمومی") : "",
+        t.description ?? "",
+        t.status,
+      ]);
+    }
+    const wsFlat = XLSX.utils.aoa_to_sheet(flatRows);
+    wsFlat["!cols"] = [
+      { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
+      { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 8 }, { wch: 12 },
+      { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 24 }, { wch: 10 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsFlat, "همه تراکنش‌ها");
+
+    // شیت ۳ به بعد: به تفکیک هر کاربر
+    const byUser = new Map<string, Transaction[]>();
+    for (const t of sorted) {
+      const arr = byUser.get(t.userId) ?? [];
+      arr.push(t);
+      byUser.set(t.userId, arr);
+    }
+    let sheetIdx = 1;
+    for (const [userId, txns] of byUser) {
+      const u = users.find((x) => x.id === userId);
+      const safeName = (u?.displayName ?? `user-${sheetIdx}`)
+        .replace(/[\\/?*[\]:]/g, "")
+        .slice(0, 28);
+      const rows: any[][] = [[
+        "نوع عملیات", "طرف حساب", "مبلغ", "واحد", "تاریخ شمسی", "دسته", "توضیحات",
+      ]];
+      // گروه‌بندی به ترتیب: طرف حساب → دسته
+      const byCp = new Map<string, Transaction[]>();
+      for (const t of txns) {
+        const arr = byCp.get(t.counterpartyId) ?? [];
+        arr.push(t);
+        byCp.set(t.counterpartyId, arr);
+      }
+      for (const [cpId, cpTxns] of byCp) {
+        const cp = counterparties.find((x) => x.id === cpId);
+        // زیرگروه دسته
+        const byCat = new Map<string | null, Transaction[]>();
+        for (const t of cpTxns) {
+          const key = t.categoryId ?? null;
+          const arr = byCat.get(key) ?? [];
+          arr.push(t);
+          byCat.set(key, arr);
+        }
+        for (const [catId, catTxns] of byCat) {
+          const cat = catId ? categories.find((x) => x.id === catId) : null;
+          for (const t of catTxns) {
+            rows.push([
+              KIND_LABELS[t.kind] ?? t.kind,
+              cp?.displayName ?? "—",
+              t.amount,
+              t.currency,
+              t.effectiveAt,
+              cat?.name ?? "(بدون دسته)",
+              t.description ?? "",
+            ]);
+          }
+        }
+      }
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 14 }, { wch: 24 }];
+      XLSX.utils.book_append_sheet(wb, ws, `${safeName.slice(0, 26)}`);
+      sheetIdx++;
+    }
+
+    const tehranStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Tehran" });
+    XLSX.writeFile(wb, `transactions-dafter-${tehranStr.replace(/[/ :,]/g, "-")}.xlsx`);
+    toast({
+      title: "خروجی اکسل ساخته شد",
+      description: `${toPersianDigits(transactions.length.toString())} تراکنش در ${toPersianDigits(String(byUser.size + 2))} شیت (خلاصه + همه + به تفکیک کاربر).`,
+    });
+  }
+
+  // ورود از اکسل — parse + ساخت تراکنش برای هر ردیف
+  async function handleImportExcel(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!currentUserId) {
+      toast({ title: "خطا", description: "احراز هویت نشده.", variant: "destructive" });
+      return;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      // شیت «ورود تراکنش‌ها» را پیدا کن — اگر نبود، اولین شیت غیر از «راهنما»
+      const sheetName =
+        wb.SheetNames.find((n) => n.includes("ورود")) ?? wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      if (!ws) {
+        toast({ title: "خطا", description: "شیت ورود پیدا نشد.", variant: "destructive" });
+        return;
+      }
+      const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1 });
+      if (rows.length < 2) {
+        toast({ title: "خطا", description: "هیچ ردیف داده‌ای نیست.", variant: "destructive" });
+        return;
+      }
+      // ردیف اول = هدر
+      const header = rows[0].map((h) => String(h ?? "").trim());
+      const findCol = (variants: string[]) =>
+        header.findIndex((h) =>
+          variants.some((v) => h.includes(v) || h.toLowerCase().includes(v.toLowerCase()))
+        );
+      const colKind = findCol(["نوع عملیات", "kind"]);
+      const colCp = findCol(["نام طرف حساب", "طرف حساب", "counterparty"]);
+      const colAmount = findCol(["مبلغ", "amount"]);
+      const colCurrency = findCol(["واحد", "currency"]);
+      const colDate = findCol(["تاریخ شمسی", "تاریخ", "effectiveAt", "date"]);
+      const colDesc = findCol(["توضیحات", "description", "desc"]);
+      const colCat = findCol(["نام دسته", "دسته", "category"]);
+
+      if (colKind < 0 || colCp < 0 || colAmount < 0 || colDate < 0) {
+        toast({
+          title: "ستون‌های لازم پیدا نشد",
+          description: "حداقل ستون‌های «نوع عملیات»، «نام طرف حساب»، «مبلغ» و «تاریخ شمسی» لازم است. از فایل الگو استفاده کنید.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const state = useAccountingStore.getState();
+      const myCps = state.counterparties.filter((c) => {
+        if (c.archivedAt) return false;
+        if (c.linkedUserId === currentUserId) return false;
+        if (!c.isShared) return c.ownerUserId === currentUserId;
+        const me = state.users.find((u) => u.id === currentUserId);
+        if (me?.role === "admin") return true;
+        return state.grants.some((g) => g.userId === currentUserId && g.counterpartyId === c.id);
+      });
+      const myCats = state.categories.filter((c) => c.userId === currentUserId);
+
+      let success = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r || r.length === 0) continue;
+        const kind = String(r[colKind] ?? "").trim();
+        const cpName = String(r[colCp] ?? "").trim();
+        const amountRaw = r[colAmount];
+        const currency = colCurrency >= 0 ? String(r[colCurrency] ?? "").trim() || "IRT" : "IRT";
+        const effectiveAt = String(r[colDate] ?? "").trim();
+        const description = colDesc >= 0 ? String(r[colDesc] ?? "").trim() : "";
+        const catName = colCat >= 0 ? String(r[colCat] ?? "").trim() : "";
+
+        if (!kind || !cpName || !amountRaw) {
+          skipped++;
+          continue;
+        }
+        // نرمال‌سازی مبلغ
+        const amount = Math.floor(Number(String(amountRaw).replace(/[^\d.-]/g, "")));
+        if (!Number.isFinite(amount) || amount <= 0) {
+          errors.push(`ردیف ${i + 1}: مبلغ نامعتبر «${amountRaw}»`);
+          skipped++;
+          continue;
+        }
+        // یافتن طرف حساب
+        const cp = myCps.find((c) => c.displayName.trim() === cpName);
+        if (!cp) {
+          errors.push(`ردیف ${i + 1}: طرف حساب «${cpName}» پیدا نشد`);
+          skipped++;
+          continue;
+        }
+        // یافتن دسته (اختیاری)
+        let categoryId: string | null = null;
+        if (catName) {
+          const cat = myCats.find((c) => c.name === catName);
+          if (!cat) {
+            errors.push(`ردیف ${i + 1}: دسته «${catName}» پیدا نشد`);
+            skipped++;
+            continue;
+          }
+          // دسته مخصوص باید با این طرف حساب منطبق باشد
+          if (cat.counterpartyId && cat.counterpartyId !== cp.id) {
+            errors.push(`ردیف ${i + 1}: دسته «${catName}» مخصوص طرف‌حساب دیگری است`);
+            skipped++;
+            continue;
+          }
+          categoryId = cat.id;
+        }
+        // اعتبارسنجی kind
+        const VALID_KINDS = ["opening_claim", "opening_debt", "claim", "debt", "paid_to", "received_from"];
+        if (!VALID_KINDS.includes(kind)) {
+          errors.push(`ردیف ${i + 1}: نوع «${kind}» نامعتبر`);
+          skipped++;
+          continue;
+        }
+
+        const res = await addTransaction(
+          {
+            kind: kind as any,
+            counterpartyId: cp.id,
+            amount,
+            currency: currency === "IRR" ? "IRR" : "IRT",
+            effectiveAt,
+            description: description || undefined,
+            categoryId,
+          },
+          currentUserId
+        );
+        if (res.ok) success++;
+        else {
+          errors.push(`ردیف ${i + 1}: ${res.error}`);
+          skipped++;
+        }
+      }
+
+      const summary =
+        `${toPersianDigits(success.toString())} تراکنش ثبت شد` +
+        (skipped > 0 ? `، ${toPersianDigits(skipped.toString())} ردیف رد شد` : "");
+      toast({
+        title: "ورود کامل شد",
+        description: errors.length > 0
+          ? `${summary} — اولین خطاها: ${errors.slice(0, 2).join("؛ ")}`
+          : summary,
+        variant: errors.length > 0 ? "destructive" : "default",
+      });
+    } catch (err) {
+      toast({
+        title: "خطا در خواندن فایل",
+        description: err instanceof Error ? err.message : "خطای ناشناخته",
+        variant: "destructive",
+      });
+    }
+    // پاک کردن input برای allow re-upload همان فایل
+    e.target.value = "";
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <FileSpreadsheet className="h-4 w-4" />
+          </span>
+          بارگذاری و خروجی اکسل
+        </CardTitle>
+        <CardDescription>
+          فایل الگوی اکسل را دانلود کنید، با فرمت درست پر کنید و دوباره بارگذاری کنید —
+          یا تمام تراکنش‌ها را به تفکیک کاربر، طرف حساب و دسته به اکسل خروجی بگیرید.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* خلاصه آماری */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-base font-bold text-primary">
+              {toPersianDigits(transactions.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">تراکنش</div>
+          </div>
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-base font-bold text-primary">
+              {toPersianDigits(users.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">کاربر</div>
+          </div>
+          <div className="rounded-xl border bg-muted/40 p-2.5 text-center">
+            <div className="text-base font-bold text-primary">
+              {toPersianDigits(categories.length.toString())}
+            </div>
+            <div className="text-[10px] text-muted-foreground">دسته</div>
+          </div>
+        </div>
+
+        {/* دکمه دانلود الگو و ورود */}
+        <div className="space-y-2">
+          <div className="text-xs font-semibold text-muted-foreground">
+            ورود (Import) تراکنش‌ها
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Button onClick={handleDownloadTemplate} variant="outline" className="h-11">
+              <Download className="h-4 w-4 ml-2" />
+              دانلود فایل الگو (Excel)
+            </Button>
+            <label className="inline-flex items-center justify-center gap-2 h-11 w-full rounded-md border border-input bg-background px-4 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer">
+              <Upload className="h-4 w-4" />
+              بارگذاری فایل پرشده
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleImportExcel}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* دکمه خروجی */}
+        <div className="space-y-2">
+          <div className="text-xs font-semibold text-muted-foreground">
+            خروجی (Export) تراکنش‌ها
+          </div>
+          <Button onClick={handleExportTransactions} className="h-11 w-full">
+            <FileSpreadsheet className="h-4 w-4 ml-2" />
+            خروجی اکسل همه تراکنش‌ها
+            <span className="text-xs opacity-80 mr-2">
+              (خلاصه + همه + به تفکیک کاربر)
+            </span>
+          </Button>
+        </div>
+
+        {/* راهنما */}
+        <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-3 text-[11px] leading-relaxed text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/15 dark:text-amber-300">
+          <div className="flex items-center gap-1.5 font-semibold mb-1">
+            <Filter className="h-3.5 w-3.5" />
+            نکته
+          </div>
+          فایل خروجی شامل سه نوع شیت است:
+          <ol className="mt-1 space-y-0.5 list-decimal pe-4">
+            <li><b>خلاصه</b> — آمار کلی + توزیع نوع عملیات</li>
+            <li><b>همه تراکنش‌ها</b> — جدول کامل با همه ستون‌ها (مناسب Pivot)</li>
+            <li><b>به تفکیک کاربر</b> — یک شیت برای هر کاربر، گروه‌بندی طرف حساب → دسته</li>
+          </ol>
+        </div>
       </CardContent>
     </Card>
   );

@@ -1,12 +1,23 @@
-# Supabase CLI config — دفتر حسابداری نسخه ۲.۰
+# Supabase CLI config — دفتر حسابداری نسخه ۳.۶
 # بعد از اجرای «supabase link --project-ref <PROJECT_REF>» نیازی به تغییر این فایل نیست.
+# verify_jwt = false یعنی خود تابع با auth.getUser توکن کاربر را بررسی می‌کند
+# (برای ربات تلگرام لازم است چون webhook از تلگرام می‌آید و توکن ندارد).
 project_id = "my-accounting-app"
 
 [functions.create-transaction]
+verify_jwt = false
+
+[functions.manage-transaction]
 verify_jwt = false
 
 [functions.admin-users]
 verify_jwt = false
 
 [functions.admin-counterparties]
+verify_jwt = false
+
+[functions.telegram-bot]
+verify_jwt = false
+
+[functions.backup-email]
 verify_jwt = false
